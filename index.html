@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Axiomatic — a causal world engine</title>
+  <meta name="description" content="Simulate civilization from a handful of rules. Trace any outcome back to its causes. Change one thing and rerun history.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>AXIOMATIC</h1>
+      <p>Its primitive is the cause. Change one thing — watch history become something else.</p>
+    </div>
+    <div class="seeds">
+      <label title="The axioms: geography, starting conditions and which combinations of ideas are valuable.">Universe
+        <input id="us" type="number" value="42" min="1"></label>
+      <label title="Chance. Same universe, different luck.">History
+        <input id="hs" type="number" value="1" min="1"></label>
+      <button id="newWorld">New world</button>
+      <button id="reroll" title="Same universe, next history seed">Reroll chance</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="stage">
+      <div class="toolbar">
+        <div class="seg" id="layers" role="tablist" aria-label="Map layer"></div>
+        <div class="seg" id="viewSeg" hidden>
+          <button data-view="base" class="on">Baseline</button>
+          <button data-view="fork">Fork</button>
+        </div>
+        <label class="chk"><input type="checkbox" id="showPeople" checked> People</label>
+      </div>
+
+      <div class="mapwrap">
+        <canvas id="map" width="768" height="448" aria-label="World map"></canvas>
+        <div id="tip" class="tip" hidden></div>
+        <div id="pickHint" class="pickhint" hidden>Click the map to place the intervention</div>
+        <div class="legend" id="mapLegend"></div>
+      </div>
+
+      <div class="transport">
+        <button id="rewind" title="Rewind to 1900 (deterministic replay)">⏮</button>
+        <button id="play" class="primary">▶ Run</button>
+        <button id="step" title="Advance one year">+1y</button>
+        <select id="speed" title="Years per second">
+          <option value="2">2 y/s</option><option value="4" selected>4 y/s</option>
+          <option value="8">8 y/s</option><option value="20">20 y/s</option>
+        </select>
+        <input id="scrub" type="range" min="0" max="160" value="0" aria-label="Year">
+        <span id="yearLbl" class="year">1900</span>
+      </div>
+
+      <div class="stats" id="stats"></div>
+
+      <div class="charts">
+        <figure class="chart"><figcaption>World output <span class="muted">(index, log scale)</span></figcaption><div id="chGdp"></div></figure>
+        <figure class="chart"><figcaption>Technologies in existence</figcaption><div id="chTech"></div></figure>
+        <figure class="chart"><figcaption>Inequality between regions <span class="muted">(Gini, output per head)</span></figcaption><div id="chGini"></div></figure>
+      </div>
+    </section>
+
+    <aside class="side">
+      <nav class="tabs" id="tabs">
+        <button data-tab="inspect" class="on">Inspect</button>
+        <button data-tab="people">Changed the world</button>
+        <button data-tab="ideas">Unrealised ideas</button>
+        <button data-tab="fork">Counterfactual</button>
+        <button data-tab="about">How it works</button>
+      </nav>
+      <div class="panel" id="p-inspect"></div>
+      <div class="panel" id="p-people" hidden></div>
+      <div class="panel" id="p-ideas" hidden></div>
+      <div class="panel" id="p-fork" hidden>
+        <h3>Change one thing</h3>
+        <div class="form">
+          <label>Intervention
+            <select id="ivType">
+              <option value="education">Better education</option>
+              <option value="capital">Access to capital</option>
+              <option value="connect">Connectivity (roads, telecom, internet)</option>
+              <option value="shock">War / disaster</option>
+              <option value="boost">Make a technology far more valuable</option>
+              <option value="block">Prevent a technology ever existing</option>
+            </select></label>
+          <label id="ivTechRow" hidden>Technology <select id="ivTech"></select></label>
+          <label id="ivYearRow">Year <input id="ivYear" type="number" min="1900" max="2059" value="1950"></label>
+          <div id="ivWhereRow" class="row">
+            <button id="ivPick">Place on map</button>
+            <span id="ivWhere" class="muted">(24,14)</span>
+            <label>Radius <select id="ivRadius"><option>2</option><option selected>4</option><option>7</option><option value="99">World</option></select></label>
+          </div>
+          <label>Strength <input id="ivMag" type="range" min="0.25" max="2" step="0.25" value="1"> <span id="ivMagLbl">1×</span></label>
+          <button id="ivAdd">Add intervention</button>
+        </div>
+        <ol id="ivList" class="ivlist"></ol>
+        <div class="row">
+          <button id="forkBtn" class="primary" disabled>Fork &amp; replay</button>
+          <button id="unfork" disabled>Discard fork</button>
+        </div>
+        <p id="forkNote" class="muted small"></p>
+
+        <h3>Many worlds</h3>
+        <p class="muted small">One history proves nothing. Run the same universe under many chance seeds — with and without your interventions (paired, same seeds) — to measure effects and to see which outcomes are <em>attractors</em> and which were luck.</p>
+        <div class="row">
+          <label>Worlds <select id="ensN"><option>8</option><option selected>16</option><option>32</option></select></label>
+          <button id="ensBtn">Run ensemble</button>
+        </div>
+        <div id="ensProg" class="prog" hidden><div></div></div>
+        <div id="ensOut"></div>
+      </div>
+      <div class="panel" id="p-about" hidden></div>
+    </aside>
+  </main>
+
+  <script src="engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
