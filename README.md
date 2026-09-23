@@ -7,6 +7,7 @@ See [CONCEPT.md](CONCEPT.md) for the idea in full.
 ## What the v0 prototype does
 
 - **564 statistical cells** stand in for billions of people. Each cell holds trait distributions: education, skill, creativity, risk appetite, capital access and connectivity.
+- **Anchored to the present:** the world opens at the current year. Before it is history, replayed from 1900 and checked against our world; after it is a 50-year projection. Years are shown relative to now, and interventions default to now.
 - **Real technologies:** the world starts in 1900 with 46 real technologies. 92 real later inventions (radio through large language models) each sit at a fixed point of the idea landscape: the combination of their two key ingredients, for example Transistor = Quantum mechanics + Vacuum tube. Importance comes from Wikipedia coverage via Wikidata (CC0). Every other combination is marked **speculative**. A real-history check compares the simulated order of inventions with our world's.
 - **Ideas are combinations** of existing technologies. Only the adjacent possible is evaluated. Most combinations are worthless or already exist; a few are valuable, following a heavy-tailed distribution.
 - **Materialisation:** when an idea succeeds or a firm is founded, the originating person is sampled from the cell, conditioned on having done it. Everyone else is never computed individually.

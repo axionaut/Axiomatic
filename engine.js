@@ -10,7 +10,16 @@
 
   const W = 48, H = 28, C = W * H;
   const MAXT = 1000;              // technology slots per world
-  const START_YEAR = 1900, YEARS = 160;
+  // Time is anchored to the present. The past runs from the start of the real data (the 1900 toolkit)
+  // up to now, where it can be checked against our world; the future is a projection FUTURE years ahead.
+  const START_YEAR = 1900, FUTURE = 50;
+  const PRESENT = (root.AXIOMATIC_PRESENT | 0) || new Date().getFullYear();
+  const NOW_T = PRESENT - START_YEAR, YEARS = NOW_T + FUTURE, END_YEAR = START_YEAR + YEARS;
+  // a year described relative to the present
+  function rel(y) {
+    const d = y - PRESENT, n = Math.abs(d);
+    return d === 0 ? 'now' : d < 0 ? `${n} year${n === 1 ? '' : 's'} ago` : `in ${n} year${n === 1 ? '' : 's'}`;
+  }
   const P = { inv: 0.05, firm: 0.03, related: 0.7 };
 
   const PREFIX = ['Steam', 'Electro', 'Hydro', 'Aero', 'Bio', 'Photo', 'Magneto', 'Thermo', 'Micro', 'Poly',
@@ -83,14 +92,47 @@
     }
   })();
   const NB = REAL.axioms.length;   // axioms: technologies that exist at t = 0
+
+  // Field evidence (data/fieldprior.js, OpenAlex): for two research subfields, how often research has
+  // combined them (vs chance) and how often those combinations became highly cited (vs average).
+  // Optional — without it, speculative ideas fall back to a field-blind prior.
+  const FP = root.AXIOMATIC_FIELDPRIOR || (typeof require === 'function' ? (() => { try { return require('./data/fieldprior.js'); } catch (e) { return null; } })() : null);
+  const realField = t => (FP && FP.techField[t.id]) || 0;
+  // a speculative idea belongs to the field of one of its parents (fixed by its identity)
+  const fieldFor = (h, fa, fb) => ((h >>> 3) & 1 ? fa : fb);
+  const EV = new Map();
+  function evidence(fa, fb) {
+    if (!FP || !fa || !fb) return null;
+    const key = Math.min(fa, fb) + '|' + Math.max(fa, fb);
+    if (EV.has(key)) return EV.get(key);
+    const A = FP.subfields[fa], B = FP.subfields[fb];
+    let ev = null;
+    if (A && B && A.works && B.works) {
+      const same = fa === fb, pr = FP.pairs[key] || [0, 0];
+      const n = same ? A.works : pr[0], hits = same ? A.hits : pr[1];
+      const expected = same ? A.works : A.works * B.works / FP.total;
+      const hr0 = FP.totalHits / FP.total, m = 200;   // shrink small samples towards the average hit rate
+      ev = { a: A.name, b: B.name, same, n, hits,
+        rel: same ? 1.5 : Math.log10((n + 1) / (expected + 1)),   // >0: combined more often than chance
+        lift: ((hits + m * hr0) / (n + m)) / hr0 };                  // >1: pays off more often than average
+    }
+    EV.set(key, ev);
+    return ev;
+  }
   const realValue = t => Math.min(2.5, Math.max(0.03, 0.02 * Math.pow(t.sitelinks / 10, 1.2)));
 
-  function techProps(us, h, depth) {
+  function techProps(us, h, depth, fa, fb) {
     const real = REAL.byHash.get(h);
     if (real) return { v: realValue(real), d: Math.min(0.95, 0.12 + 0.3 * rnd(us, h, 3, 0) + 0.045 * depth), real };
-    const dud = rnd(us, h, 1, 0) < 0.55;
-    // speculative value: heavy-tailed estimate, capped below the most important real inventions
-    const v = dud ? 0 : Math.min(0.8, 0.012 * Math.pow(1 - rnd(us, h, 2, 0) * 0.999, -1 / 1.25) * (1 + 0.08 * depth));
+    // speculative value: heavy-tailed estimate, capped below the most important real inventions.
+    // Field evidence shifts it: related fields yield something useful more often; fields whose
+    // combinations get cited more pay more; atypical pairings (rarer than chance) have a longer tail.
+    const ev = evidence(fa, fb);
+    const pUseful = ev ? 0.45 * Math.min(1.4, Math.max(0.3, 0.75 + 0.3 * Math.tanh(ev.rel))) : 0.45;
+    const novelty = ev && ev.rel < 0 ? Math.min(1, -ev.rel) : 0;
+    const scale = ev ? 0.012 * Math.pow(ev.lift, 0.8) * (1 + 0.8 * novelty) : 0.012;
+    const dud = rnd(us, h, 1, 0) >= pUseful;
+    const v = dud ? 0 : Math.min(0.8, scale * Math.pow(1 - rnd(us, h, 2, 0) * 0.999, -1 / 1.25) * (1 + 0.08 * depth));
     const d = Math.min(0.95, 0.12 + 0.55 * rnd(us, h, 3, 0) + 0.045 * depth);
     return { v, d };
   }
@@ -223,7 +265,7 @@
     this.lostCap = new Float32Array(C); this.lostRes = new Float32Array(C);   // value of ideas that died here, by bottleneck
     this.exp = new Float32Array(MAXT * C); this.exp2 = new Float32Array(MAXT * C);
     this.exp.set(U.baseExp);
-    this.T = { n: 0, hash: [], a: [], b: [], v: [], d: [], depth: [], year: [], cell: [], name: [], inv: [], meta: [], real: [],
+    this.T = { n: 0, hash: [], a: [], b: [], v: [], d: [], depth: [], year: [], cell: [], name: [], inv: [], meta: [], real: [], field: [],
       children: [], adopt: new Float32Array(MAXT) };
     this.tIndex = new Map(); this.names = new Set(); this.boost = new Map();
     for (let k = 0; k < NB; k++) this.addTech(REAL.axioms[k].h, -1, -1, -1, { v: 0.08, d: 0, real: REAL.axioms[k] }, null);
@@ -250,6 +292,7 @@
     T.depth[k] = a < 0 ? 0 : Math.max(T.depth[a], T.depth[b]) + 1;
     T.year[k] = START_YEAR + this.t; T.cell[k] = c; T.name[k] = name; T.inv[k] = -1; T.meta[k] = meta; T.children[k] = [];
     T.real[k] = props.real || null;
+    T.field[k] = props.real ? realField(props.real) : fieldFor(h, T.field[a], T.field[b]);
     if (a >= 0) { T.children[a].push(k); T.children[b].push(k); }
     this.tIndex.set(h, k);
     return k;
@@ -336,7 +379,7 @@
         const T = this.T, a = this.tIndex.get(iv.ah), b = this.tIndex.get(iv.bh);
         if (a === undefined || b === undefined || this.tIndex.has(iv.tech)) break;
         const c = iv.cell >= 0 && this.U.land[iv.cell] ? iv.cell : T.cell[a] >= 0 ? T.cell[a] : this.U.landIdx[0];
-        const props = techProps(this.U.us, iv.tech, Math.max(T.depth[a], T.depth[b]) + 1);
+        const props = techProps(this.U.us, iv.tech, Math.max(T.depth[a], T.depth[b]) + 1, T.field[a], T.field[b]);
         const k = this.addTech(iv.tech, a, b, c, props, { seeded: true, capP: 1, r1: 0, resP: 1, r2: 0, ea: this.exp[a * C + c], eb: this.exp[b * C + c], priorFails: 0 });
         if (k < 0) break;
         this.exp[k * C + c] = 0.3;
@@ -406,7 +449,7 @@
           const h = pairHash(T.hash[a], T.hash[b]);
           if (this.tIndex.has(h)) { this.counters.rediscover++; continue; }
           if (this.blocked.has(h)) { this.counters.blocked++; continue; }
-          const props = techProps(U.us, h, Math.max(T.depth[a], T.depth[b]) + 1);
+          const props = techProps(U.us, h, Math.max(T.depth[a], T.depth[b]) + 1, T.field[a], T.field[b]);
           if (props.v === 0) { this.counters.duds++; continue; }
           let idea = this.ideas.get(h);
           if (!idea) { idea = { h, a, b, v: props.v * (this.boost.get(h) || 1), name: nameFor(h, T.name[a], T.name[b]), conceived: 0, failCap: 0, failRes: 0, tries: [], realised: -1 }; this.ideas.set(h, idea); }
@@ -544,9 +587,10 @@
   };
 
   // How closely this history's order of real inventions follows our world's (Spearman rank correlation)
+  // Only the simulated past (up to the present) is comparable with our world.
   World.prototype.realCheck = function () {
     const sim = [], real = [];
-    for (let k = NB; k < this.T.n; k++) if (this.T.real[k]) { sim.push(this.T.year[k]); real.push(this.T.real[k].year); }
+    for (let k = NB; k < this.T.n; k++) if (this.T.real[k] && this.T.year[k] <= PRESENT) { sim.push(this.T.year[k]); real.push(this.T.real[k].year); }
     let within = 0;
     for (let i = 0; i < sim.length; i++) if (Math.abs(sim[i] - real[i]) <= 15) within++;
     return { found: sim.length, total: REAL.inventions, rho: spearman(sim, real), within,
@@ -617,7 +661,7 @@
       pairs++;
       const h = pairHash(T.hash[a], T.hash[b]);
       if (this.tIndex.has(h) || this.blocked.has(h)) continue;
-      const depth = Math.max(T.depth[a], T.depth[b]) + 1, pr = techProps(us, h, depth);
+      const depth = Math.max(T.depth[a], T.depth[b]) + 1, pr = techProps(us, h, depth, T.field[a], T.field[b]);
       if (pr.v > 0) cand.push({ a, b, h, depth, v: pr.v * (this.boost.get(h) || 1), d: pr.d });
     }
     const valuable = cand.length;
@@ -626,9 +670,10 @@
     const top = cand.slice(0, 400).concat(cand.slice(400).filter(f => REAL.byHash.has(f.h)));
     for (const f of top) {
       // doors: valuable ideas that become possible once this one exists
-      const kids = [];
+      const kids = [], ff = REAL.byHash.has(f.h) ? realField(REAL.byHash.get(f.h)) : fieldFor(f.h, T.field[f.a], T.field[f.b]);
+      f.ev = evidence(T.field[f.a], T.field[f.b]);
       for (let j = 0; j < n; j++) {
-        const v2 = techProps(us, pairHash(f.h, T.hash[j]), f.depth + 1).v;
+        const v2 = techProps(us, pairHash(f.h, T.hash[j]), f.depth + 1, ff, T.field[j]).v;
         if (v2 > 0) kids.push(v2);
       }
       kids.sort((x, y) => y - x);
@@ -722,7 +767,7 @@
     return out;
   }
 
-  const API = { W, H, C, MAXT, START_YEAR, YEARS, NB, REAL, TRAITS, makeUniverse, World, runEnsemble, summarise, aggregate, testIdea, regionName, ivLabel, regionCells, hash4, rnd };
+  const API = { W, H, C, MAXT, START_YEAR, YEARS, PRESENT, NOW_T, FUTURE, END_YEAR, rel, NB, REAL, FP, evidence, TRAITS, makeUniverse, World, runEnsemble, summarise, aggregate, testIdea, regionName, ivLabel, regionCells, hash4, rnd };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   root.Axiomatic = API;
 })(typeof self !== 'undefined' ? self : this);

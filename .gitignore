@@ -5,3 +5,4 @@ spec.md
 CHANGELOG.md
 node_modules/
 *.log
+tools/.openalex-cache.json

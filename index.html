@@ -43,15 +43,16 @@
       </div>
 
       <div class="transport">
-        <button id="rewind" title="Rewind to 1900 (deterministic replay)">⏮</button>
+        <button id="rewind" title="Rewind to the start of history (deterministic replay)">⏮</button>
         <button id="play" class="primary">▶ Run</button>
         <button id="step" title="Advance one year">+1y</button>
         <select id="speed" title="Years per second">
           <option value="2">2 y/s</option><option value="4" selected>4 y/s</option>
           <option value="8">8 y/s</option><option value="20">20 y/s</option>
         </select>
-        <input id="scrub" type="range" min="0" max="160" value="0" aria-label="Year">
-        <span id="yearLbl" class="year">1900</span>
+        <input id="scrub" type="range" min="0" max="176" value="0" aria-label="Year">
+        <button id="toNow" title="Jump to the present">Now</button>
+        <span class="yearbox"><span id="yearLbl" class="year"></span><span id="yearRel" class="yearrel"></span></span>
       </div>
 
       <div class="stats" id="stats"></div>
@@ -89,7 +90,7 @@
               <option value="block">Prevent a technology ever existing</option>
             </select></label>
           <label id="ivTechRow" hidden>Technology <select id="ivTech"></select></label>
-          <label id="ivYearRow">Year <input id="ivYear" type="number" min="1900" max="2059" value="1950"></label>
+          <label id="ivYearRow">Year <input id="ivYear" type="number"> <span id="ivYearRel" class="muted"></span></label>
           <div id="ivWhereRow" class="row">
             <button id="ivPick">Place on map</button>
             <span id="ivWhere" class="muted">(24,14)</span>

@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const A = window.Axiomatic;
-  const { W, H, START_YEAR, YEARS, NB } = A;
+  const { W, H, START_YEAR, YEARS, NB, PRESENT, NOW_T, END_YEAR, rel } = A;
   const CELL = 16;
   const $ = s => document.querySelector(s);
   const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
@@ -51,7 +51,7 @@
   function newWorld() {
     S.us = Math.max(1, +$('#us').value | 0); S.seed = Math.max(1, +$('#hs').value | 0);
     S.U = A.makeUniverse(S.us);
-    S.base = new A.World(S.U, S.seed, []);
+    S.base = new A.World(S.U, S.seed, []).runTo(NOW_T);   // open at the present; the past has already happened
     S.fork = null; S.view = 'base'; S.sel = null; S.back = []; S.ens = null; S.playing = false;
     $('#ensOut').innerHTML = '';
     syncForkUi(); markAll();
@@ -217,9 +217,14 @@
       tile('Ideas evaluated', cnt.attempts.toLocaleString(), `${(w.T.n - NB).toLocaleString()} became objects`) +
       tile('Gini (regions)', s.gini[i].toFixed(2), 'output per head');
     $('#yearLbl').textContent = w.year();
+    $('#yearRel').textContent = eraOf(w.year());
     $('#scrub').value = w.t;
-    $('#play').textContent = S.playing ? '❚❚ Pause' : (S.base.t >= YEARS ? '▶ Done' : '▶ Run');
+    $('#play').textContent = S.playing ? '❚❚ Pause' : S.base.t >= YEARS ? '▶ Done' : S.base.t >= NOW_T ? '▶ Project future' : '▶ Replay to now';
   }
+
+  // where a year sits relative to the present
+  function eraOf(y) { return y < PRESENT ? `${rel(y)} · history` : y === PRESENT ? 'now' : `${rel(y)} · projection`; }
+  function when(y) { return `${y} <span class="meta">(${rel(y)})</span>`; }
 
   // ---------- charts ----------
   function makeChart(el, opts) {
@@ -235,7 +240,7 @@
       const rows = d.series.filter(s => s.vals[i] != null).map(s => `<i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${s.color};margin-right:5px"></i>${esc(s.name)}: <b>${opts.fmt(s.vals[i])}</b>`);
       if (d.band && d.band[i]) rows.push(`<span class="muted">ensemble 10–90%: ${opts.fmt(d.band[i][0])}–${opts.fmt(d.band[i][2])}</span>`);
       if (!rows.length) { tip.hidden = true; ch.cross.setAttribute('opacity', 0); return; }
-      tip.innerHTML = `<b>${yr}</b><br>${rows.join('<br>')}`;
+      tip.innerHTML = `<b>${yr}</b> <span class="muted">${rel(yr)}</span><br>${rows.join('<br>')}`;
       tip.hidden = false;
       const fr = el.parentElement.getBoundingClientRect();
       let left = ev.clientX - fr.left + 12;
@@ -266,7 +271,12 @@
       }
       let g = '';
       for (const v of ticks) g += `<line x1="${m.l}" x2="${wpx - m.r}" y1="${y(v)}" y2="${y(v)}" stroke="#2c2c2a"/><text x="${m.l - 6}" y="${y(v) + 3.5}" text-anchor="end" fill="#898781" font-size="10">${opts.tick(v)}</text>`;
-      for (let yr = START_YEAR; yr <= START_YEAR + YEARS; yr += 40) g += `<text x="${x(yr)}" y="${hpx - 5}" text-anchor="middle" fill="#898781" font-size="10">${yr}</text>`;
+      // the future is shaded; the present is a line
+      const xn = x(PRESENT);
+      g += `<rect x="${xn}" y="${m.t}" width="${Math.max(0, wpx - m.r - xn)}" height="${hpx - m.t - m.b}" fill="rgba(255,255,255,0.03)"/>`;
+      g += `<line x1="${xn}" x2="${xn}" y1="${m.t}" y2="${hpx - m.b}" stroke="#898781" stroke-dasharray="3 3"/>`;
+      for (let yr = START_YEAR; yr <= END_YEAR; yr += 25) if (Math.abs(yr - PRESENT) >= 12) g += `<text x="${x(yr)}" y="${hpx - 5}" text-anchor="middle" fill="#898781" font-size="10">${yr}</text>`;
+      g += `<text x="${xn}" y="${hpx - 5}" text-anchor="middle" fill="#d6d4cd" font-size="10">now</text>`;
       g += `<line x1="${m.l}" x2="${wpx - m.r}" y1="${hpx - m.b}" y2="${hpx - m.b}" stroke="#383835"/>`;
       if (band) {
         const up = band.map((b, i) => `${x(START_YEAR + i)},${y(b[2])}`), dn = band.map((b, i) => `${x(START_YEAR + i)},${y(b[0])}`).reverse();
@@ -367,16 +377,31 @@
   }
 
   // what the same technology looked like in our world (Wikidata)
-  function realHtml(r) {
-    if (!r) return `<div class="card small"><span class="badge recon">SPECULATIVE</span>Never made in our world — a combination the model considers possible. Its value is an estimate, not a fact.</div>`;
+  // what research says about combining two fields (OpenAlex)
+  function evidenceHtml(ev) {
+    if (!ev) return '';
+    const x = v => v >= 10 ? v.toFixed(0) : v.toFixed(1);
+    const related = ev.same ? `Same field (${esc(ev.a)}).` : ev.n
+      ? `${esc(ev.a)} × ${esc(ev.b)}: combined in ${ev.n.toLocaleString()} research works — ${x(Math.pow(10, ev.rel))}× ${ev.rel >= 0 ? 'more' : 'less'} often than chance.`
+      : `${esc(ev.a)} × ${esc(ev.b)}: never combined in indexed research — an atypical pairing.`;
+    const pays = `${ev.lift >= 1 ? 'Pays off' : 'Pays off less'}: highly cited ${x(ev.lift)}× as often as the average work.`;
+    return `<span class="meta">${related} ${pays}</span>`;
+  }
+  function describe(w, a, b) {
+    const d = k => w.T.real[k] && w.T.real[k].desc ? ` (${esc(w.T.real[k].desc)})` : '';
+    return `Bring ${esc(w.T.name[a])}${d(a)} together with ${esc(w.T.name[b])}${d(b)}.`;
+  }
+  function realHtml(r, w, k) {
+    if (!r) return `<div class="card small"><span class="badge recon">SPECULATIVE</span>Never made in our world — a combination the model considers possible. Its value is an estimate, not a fact.
+      ${w && w.T.a[k] >= 0 ? `<br>${describe(w, w.T.a[k], w.T.b[k])}<br>${evidenceHtml(A.evidence(w.T.field[w.T.a[k]], w.T.field[w.T.b[k]]))}` : ''}</div>`;
     return `<div class="card small"><span class="badge rec">REAL</span><b>In our world:</b> ${r.year < 0 ? 'ancient' : r.year}${r.inventors.length ? ' · ' + r.inventors.map(esc).join(', ') : ''}${r.desc ? `<br><span class="meta">${esc(r.desc)}</span>` : ''}
       ${r.qid ? `<br><a class="ln" href="https://www.wikidata.org/wiki/${r.qid}" target="_blank" rel="noopener">Wikidata ${r.qid}</a> · ${r.sitelinks} Wikipedia editions` : ''}</div>`;
   }
   function realCheckHtml(w) {
     const r = w.realCheck();
-    if (r.found < 5) return `<div class="card small"><b>Real-history check</b> <span class="meta">— ${r.found} of ${r.total} real inventions so far; the order is compared once there are five.</span></div>`;
+    if (r.found < 5) return `<div class="card small"><b>Real-history check</b> <span class="meta">— ${r.found} of ${r.total} real inventions by now; the order is compared once there are five.</span></div>`;
     return `<div class="card small"><b>Real-history check</b> <span class="meta">— our world used as the benchmark</span><div class="kv" style="margin-top:4px">
-      <span>Real inventions made</span><span>${r.found} of ${r.total}</span>
+      <span>Real inventions made by now</span><span>${r.found} of ${r.total}</span>
       <span>Order vs our world (rank correlation, 1 = same)</span><span>${r.rho.toFixed(2)}</span>
       <span>Typical timing error</span><span>${r.mae.toFixed(0)} years</span>
       <span>Within 15 years of the real date</span><span>${r.within}</span></div></div>`;
@@ -384,11 +409,11 @@
 
   function overviewHtml(w) {
     const ev = w.events.filter(e => e.weight >= 0.12).slice(-60).reverse();
-    return `<p class="title">${S.view === 'fork' ? 'Fork' : 'Baseline'} world · ${w.year()}</p>
+    return `<p class="title">${S.view === 'fork' ? 'Fork' : 'Baseline'} world · ${w.year()} <span class="meta">${eraOf(w.year())}</span></p>
       <p class="sub">Click a region, a white dot (a materialised person) or anything underlined. Everything consequential can be traced back to its causes.</p>
       ${realCheckHtml(w)}
       <h3>Consequential events</h3>
-      ${ev.length ? `<ul class="list">${ev.map(e => `<li><span class="meta">${e.year}</span> ${eventText(w, e)}</li>`).join('')}</ul>` : '<p class="muted">Nothing consequential yet. Press Run.</p>'}`;
+      ${ev.length ? `<ul class="list">${ev.map(e => `<li${e.year > PRESENT ? ' class="future"' : ''}><span class="meta" title="${rel(e.year)}">${e.year}${e.year > PRESENT ? ' · projected' : ''}</span> ${eventText(w, e)}</li>`).join('')}</ul>` : '<p class="muted">Nothing consequential yet. Press Run.</p>'}`;
   }
   function eventText(w, e) {
     const r = e.ref;
@@ -448,7 +473,7 @@
     const m = T.meta[k], p = T.inv[k] >= 0 ? w.people[T.inv[k]] : null;
     const idea = w.ideas.get(T.hash[k]);
     return `<p class="title">${esc(T.name[k])}</p>
-      <p class="sub">Invented ${T.year[k]} in ${link('cell', T.cell[k], A.regionName(S.us, T.cell[k]))} by ${p ? personLink(w, p.i) : '?'} — a combination of ${techLink(w, T.a[k])} + ${techLink(w, T.b[k])}.</p>
+      <p class="sub">Invented ${when(T.year[k])}${T.year[k] > PRESENT ? ' — projected' : ''} in ${link('cell', T.cell[k], A.regionName(S.us, T.cell[k]))} by ${p ? personLink(w, p.i) : '?'} — a combination of ${techLink(w, T.a[k])} + ${techLink(w, T.b[k])}.</p>
       <div class="kv">
         <span>Economic value</span><span>${T.v[k].toFixed(3)}</span>
         <span>Adoption worldwide</span><span>${pct(T.adopt[k])}%</span>
@@ -456,7 +481,7 @@
         <span>Technologies descended from it</span><span>${w.descendants(k)}</span>
         <span>Firms built on it</span><span>${firms.length} <span class="meta">(${Math.round(aliveEmp).toLocaleString()} employed now)</span></span>
       </div>
-      ${realHtml(T.real[k])}
+      ${realHtml(T.real[k], w, k)}
       <h3>Chance</h3>
       <div class="card">${m.seeded ? `${badge('recorded')} Brought into existence by your intervention — no chance involved.` : `
         ${badge('recorded')} Capability roll ${m.r1.toFixed(3)} needed &lt; ${m.capP.toFixed(3)}; capital roll ${m.r2.toFixed(3)} needed &lt; ${m.resP.toFixed(3)}.<br>
@@ -577,6 +602,7 @@
         return `<li><span class="meta">${i + 1}.</span> ${tag}<b>${esc(f.name)}</b> <span class="meta">= ${techLink(w, f.a)} + ${techLink(w, f.b)}</span>
           <div class="bar" style="width:${Math.max(2, (byExp ? f.expected : f.potential) / max * 100)}%"></div>
           <div class="small">value ${f.v.toFixed(2)} · unlocks ${f.doors} valuable idea${f.doors === 1 ? '' : 's'} · potential ${f.potential.toFixed(2)}</div>
+          ${f.real ? '' : `<div>${evidenceHtml(f.ev)}</div>`}
           <div class="meta">${why}${f.tried ? ` · tried ${f.tried}× (failed: skill ${f.failCap}, capital ${f.failRes})` : ' · never tried'}</div>
           <button class="small" data-test="${i}" ${test && test.running ? 'disabled' : ''}>Test in many worlds</button></li>`;
       }).join('')}</ul>
@@ -591,9 +617,9 @@
     const verdict = r.naturally >= r.n * 0.8 ? 'it was coming anyway; the gain is mostly from having it sooner.'
       : r.naturally === 0 ? 'the world would not have found it on its own.' : 'without help it might never have arrived.';
     return `<div class="card"><b>${esc(r.idea.name)}</b> brought into existence in ${r.year} · ${r.n} paired futures
-      <div class="big ${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${signPct(h.med)} <span class="small muted">output per head by ${START_YEAR + YEARS}</span></div>
+      <div class="big ${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${signPct(h.med)} <span class="small muted">output per head by ${END_YEAR} (${rel(END_YEAR)})</span></div>
       10–90%: ${signPct(h.p10)} to ${signPct(h.p90)} · higher in ${h.better} of ${r.n} futures<br>
-      Later ideas built on it: ${r.desc.med} <span class="meta">(${r.desc.p10}–${r.desc.p90})</span> · adoption by ${START_YEAR + YEARS}: ${pct(r.adopt.med)}%<br>
+      Later ideas built on it: ${r.desc.med} <span class="meta">(${r.desc.p10}–${r.desc.p90})</span> · adoption by ${END_YEAR}: ${pct(r.adopt.med)}%<br>
       Without help it appeared in <b>${r.naturally} of ${r.n}</b> futures${r.naturally ? ` (typically ${r.naturalYear})` : ''} — ${verdict}
       <div class="row"><button data-seed-fork>Add as intervention</button></div></div>`;
   }
@@ -671,7 +697,9 @@
       <p><b>Seed thought.</b> All ideas are possibilities with different probabilities, and those probabilities come from combining a finite — but seemingly infinite — set of things.</p>
       <p><b>Cells, not agents.</b> Humanity is ${S.U.landIdx.length} statistical cells. Each holds trait <em>distributions</em> (education, skill, creativity, risk appetite, capital access, connectivity) for millions of people.</p>
       <p><b>Ideas are combinations.</b> Every invention combines two existing technologies. Only the <em>adjacent possible</em> is ever evaluated: combinations of things a region already knows.</p>
-      <p><b>Real technologies.</b> The world starts in 1900 with ${A.NB} real technologies (steam engine, telephone, X-ray…). ${A.REAL.inventions} real later inventions are fixed points of the idea landscape: each is the combination of its two key ingredients, e.g. Transistor = Quantum mechanics + Vacuum tube. Their importance comes from how many Wikipedia language editions cover them (Wikidata, CC0). Every other combination is ${badge('reconstructed').replace('RECONSTRUCTED', 'SPECULATIVE')}: possible in the model, never made in our world, valued by estimate. Our world is the benchmark: the real-history check measures how closely the simulated order of inventions follows the real one.</p>
+      <p><b>Real technologies.</b> The world starts in 1900 with ${A.NB} real technologies (steam engine, telephone, X-ray…). ${A.REAL.inventions} real later inventions are fixed points of the idea landscape: each is the combination of its two key ingredients, e.g. Transistor = Quantum mechanics + Vacuum tube. Their importance comes from how many Wikipedia language editions cover them (Wikidata, CC0).
+      ${A.FP ? `Speculative ideas are judged with research evidence (OpenAlex, CC0): each technology belongs to a research field; ideas from fields that research combines often are more likely to be useful, fields whose combinations get highly cited pay more, and rare (atypical) pairings get a longer tail — after Uzzi et al. (2013).` : ''} Every other combination is ${badge('reconstructed').replace('RECONSTRUCTED', 'SPECULATIVE')}: possible in the model, never made in our world, valued by estimate. Our world is the benchmark: the real-history check measures how closely the simulated order of inventions follows the real one.</p>
+      <p><b>Anchored to the present.</b> The world opens at now (${PRESENT}). Everything before it is <em>history</em>: replayed from ${START_YEAR}, the start of the real data, and checked against our world. Everything after it is a <em>projection</em> ${END_YEAR - PRESENT} years ahead (shaded on the charts). Interventions are placed relative to now: change the past and replay, or change the future and project.</p>
       <p><b>Computation follows consequence.</b> Each cell has an expected idea rate. Only the draws that matter become objects. When one succeeds, the cell splits and the originating person is <em>materialised</em>, sampled conditioned on having done it.</p>
       <p><b>Recorded vs reconstructed.</b> Anything computed as it happened is ${badge('recorded')}: conditions, chance rolls, the ideas combined, interventions. A materialised person's earlier life is ${badge('reconstructed')}: plausible and consistent with the recorded world, but not observed.</p>
       <p><b>Determinism.</b> Every random draw is a hash of (seed, year, cell, event). Rewinding replays exactly. A fork uses the same numbers, so it differs only where your change caused a difference.</p>
@@ -719,7 +747,7 @@
   $('#ivAdd').addEventListener('click', () => {
     if (S.ivs.length >= 8) return alert('Up to 8 interventions per fork.');
     const type = $('#ivType').value, opt = $('#ivTech').selectedOptions[0];
-    const iv = { type, year: Math.max(START_YEAR, Math.min(START_YEAR + YEARS - 1, +$('#ivYear').value | 0)), cx: S.draft.cx, cy: S.draft.cy,
+    const iv = { type, year: Math.max(START_YEAR, Math.min(END_YEAR - 1, +$('#ivYear').value | 0)), cx: S.draft.cx, cy: S.draft.cy,
       radius: +$('#ivRadius').value, mag: +$('#ivMag').value };
     if (type === 'boost' || type === 'block') {
       if (!opt) return;
@@ -799,14 +827,14 @@
     if (r.effect) {
       const e = r.effect, h = e.head, up = h.med >= 1;
       html += `<div class="card"><div class="big ${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${signPct(h.med)} <span class="small muted">output per head</span></div>
-        Median effect in ${START_YEAR + YEARS}, paired by chance seed. 10–90% range: ${signPct(h.p10)} to ${signPct(h.p90)}; higher in <b>${h.better} of ${n}</b> worlds.<br>
+        Median effect in ${END_YEAR} (${rel(END_YEAR)}), paired by chance seed. 10–90% range: ${signPct(h.p10)} to ${signPct(h.p90)}; higher in <b>${h.better} of ${n}</b> worlds.<br>
         Total world output: ${signPct(e.med)} (${signPct(e.p10)} to ${signPct(e.p90)}; higher in ${e.better} of ${n}). The two differ when the change also alters population.
         <div class="meta">${E.ivs.map(v => esc(A.ivLabel(v))).join(' · ')}</div></div>`;
     }
     html += `<div class="card"><b>Reality checks</b> <span class="meta">(emergent — not programmed)</span><div class="kv" style="margin-top:6px">
       <span>Firm-size Zipf exponent (real ≈ 1.0)</span><span>${isFinite(r.base.zipf) ? r.base.zipf.toFixed(2) : '—'}</span>
-      <span>Regional Gini in ${START_YEAR + YEARS}</span><span>${r.base.gini.toFixed(2)}</span>
-      <span>Technologies by ${START_YEAR + YEARS}</span><span>${r.base.nTech}</span>
+      <span>Regional Gini in ${END_YEAR}</span><span>${r.base.gini.toFixed(2)}</span>
+      <span>Technologies by ${END_YEAR}</span><span>${r.base.nTech}</span>
       <span>Real inventions made (of ${r.base.realTotal})</span><span>${r.base.realFound}</span>
       <span>Order vs our world (rank correlation)</span><span>${isFinite(r.base.realRho) ? r.base.realRho.toFixed(2) : '—'}</span>
       <span>Typical timing error</span><span>${isFinite(r.base.realMae) ? r.base.realMae.toFixed(0) + ' years' : '—'}</span></div></div>`;
@@ -854,7 +882,9 @@
   $('#play').addEventListener('click', () => { if (S.base.t >= YEARS) return; S.playing = !S.playing; S.dirty = true; });
   $('#step').addEventListener('click', () => { S.playing = false; advance(); markAll(); });
   $('#rewind').addEventListener('click', () => { S.playing = false; goTo(0); });
-  $('#scrub').addEventListener('input', () => { $('#yearLbl').textContent = START_YEAR + +$('#scrub').value; });
+  $('#scrub').addEventListener('input', () => { const y = START_YEAR + +$('#scrub').value; $('#yearLbl').textContent = y; $('#yearRel').textContent = eraOf(y); });
+  $('#toNow').addEventListener('click', () => { S.playing = false; goTo(NOW_T); });
+  $('#ivYear').addEventListener('input', () => { $('#ivYearRel').textContent = rel(+$('#ivYear').value | 0); });
   $('#scrub').addEventListener('change', () => { S.playing = false; goTo(+$('#scrub').value); });
   $('#newWorld').addEventListener('click', newWorld);
   $('#reroll').addEventListener('click', () => { $('#hs').value = (+$('#hs').value | 0) + 1; newWorld(); });
@@ -873,7 +903,10 @@
     if (S.playing) {
       acc += dt * +$('#speed').value;
       let n = 0;
-      while (acc >= 1 && n < 3) { acc -= 1; n++; if (!advance()) { S.playing = false; acc = 0; break; } }
+      while (acc >= 1 && n < 3) {
+        acc -= 1; n++;
+        if (!advance() || S.base.t === NOW_T) { S.playing = false; acc = 0; break; }
+      }
       if (n) S.sideDirty = true;
     }
     if (S.dirty) {
@@ -884,6 +917,9 @@
     requestAnimationFrame(frame);
   }
 
+  $('#scrub').max = YEARS;
+  $('#ivYear').min = START_YEAR; $('#ivYear').max = END_YEAR - 1; $('#ivYear').value = PRESENT;
+  $('#ivYearRel').textContent = rel(PRESENT);
   newWorld();
   syncIvForm();
   requestAnimationFrame(frame);

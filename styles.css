@@ -76,6 +76,9 @@ h3:first-child { margin-top: 4px; }
 
 .transport { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
 .transport input[type=range] { flex: 1; accent-color: var(--accent); }
+.yearbox { display: flex; flex-direction: column; align-items: flex-end; min-width: 150px; }
+.yearrel { font-size: 11px; color: var(--ink-2); }
+.list li.future { opacity: 0.8; }
 .year { font-size: 22px; font-weight: 600; min-width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
 
 .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin-bottom: 12px; }
