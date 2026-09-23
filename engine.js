@@ -145,7 +145,8 @@
   // ---------- world ----------
   function normalizeIv(iv, n) {
     return { type: iv.type, year: iv.year | 0, cx: iv.cx | 0, cy: iv.cy | 0, radius: iv.radius == null ? 3 : +iv.radius,
-      mag: iv.mag == null ? 1 : +iv.mag, tech: iv.tech >>> 0, techName: iv.techName || '', n };
+      mag: iv.mag == null ? 1 : +iv.mag, tech: iv.tech >>> 0, techName: iv.techName || '', n,
+      ah: iv.ah >>> 0, bh: iv.bh >>> 0, cell: iv.cell == null ? -1 : iv.cell | 0 };
   }
   function ivLabel(iv) {
     const where = iv.radius >= 99 ? 'worldwide' : `around (${iv.cx},${iv.cy}) r${iv.radius}`;
@@ -156,6 +157,7 @@
       case 'shock': return `War / disaster ×${iv.mag} ${where} in ${iv.year}`;
       case 'boost': return `${iv.techName} made ${(1 + 2 * iv.mag).toFixed(1)}× more valuable from ${iv.year}`;
       case 'block': return `${iv.techName} can never be invented`;
+      case 'seed': return `${iv.techName} brought into existence in ${iv.year}`;
     }
     return iv.type;
   }
@@ -168,8 +170,11 @@
     return out;
   }
 
-  function World(U, seed, interventions) {
-    this.U = U; this.seed = seed >>> 0; this.t = 0;
+  // opts.branch = { t, seed }: from tick t onward chance comes from another seed, so many futures
+  // can share one identical past.
+  function World(U, seed, interventions, opts) {
+    this.U = U; this.seed = seed >>> 0; this.t = 0; this.cur = this.seed;
+    this.branch = opts && opts.branch ? { t: opts.branch.t | 0, seed: opts.branch.seed >>> 0 } : null;
     this.iv = (interventions || []).map(normalizeIv);
     const I = U.init;
     this.pop = Float32Array.from(I.pop); this.edu = Float32Array.from(I.edu); this.skill = Float32Array.from(I.skill);
@@ -178,6 +183,7 @@
     this.wealth = new Float32Array(C); this.prod = new Float32Array(C); this.techSum = new Float32Array(C);
     this.femp = new Float32Array(C); this.eduB = new Float32Array(C); this.capB = new Float32Array(C);
     this.connB = new Float32Array(C); this.ivMask = new Uint8Array(C);
+    this.lostCap = new Float32Array(C); this.lostRes = new Float32Array(C);   // value of ideas that died here, by bottleneck
     this.exp = new Float32Array(MAXT * C); this.exp2 = new Float32Array(MAXT * C);
     this.exp.set(U.baseExp);
     this.T = { n: 0, hash: [], a: [], b: [], v: [], d: [], depth: [], year: [], cell: [], name: [], inv: [], meta: [],
@@ -211,6 +217,13 @@
     return k;
   };
 
+  // chance a region can realise an idea: capability (ideas get harder to find as the frontier grows — Bloom et al.)
+  World.prototype.capProb = function (c, d) {
+    return clamp01(0.3 + 1.1 * (0.5 * this.skill[c] + 0.5 * this.edu[c]) - 0.8 * d) / (1 + this.T.n / 200);
+  };
+  // ... and capital: big ideas need more of it
+  World.prototype.resProb = function (c, v) { return clamp01((0.15 + 0.85 * this.cap[c]) * (v > 0.3 ? 0.7 : 1)); };
+
   World.prototype.cellSnap = function (c) {
     let known = 0;
     for (let k = 0; k < this.T.n; k++) if (this.exp[k * C + c] > 0.03) known++;
@@ -232,14 +245,14 @@
     const popI = Math.max(1, Math.floor(this.pop[c])), key = this.evc++ & 0xffff;
     const cand = [], wts = []; let tot = 0;
     for (let j = 0; j < 24; j++) {
-      const idx = hash4(this.seed, this.t, c, 0x40000000 + (key << 5) + j) % popI;
+      const idx = hash4(this.cur, this.t, c, 0x40000000 + (key << 5) + j) % popI;
       const tr = this.personTraits(c, idx);
       const w = role === 'inventor'
         ? Math.pow(tr.creativity * tr.skill * (0.3 + tr.education), 2) + 1e-9
         : Math.pow(tr.risk * (0.3 + tr.capital) * (0.3 + tr.wealthPct), 2) + 1e-9;
       cand.push([idx, tr]); wts.push(w); tot += w;
     }
-    let u = rnd(this.seed, this.t, c, 0x50000000 + key) * tot, pick = 0;
+    let u = rnd(this.cur, this.t, c, 0x50000000 + key) * tot, pick = 0;
     while (pick < 23 && u > wts[pick]) { u -= wts[pick]; pick++; }
     const [idx, tr] = cand[pick], pid = c * 1e7 + idx;
     let p = this.pidMap.get(pid);
@@ -256,7 +269,7 @@
   };
 
   World.prototype.foundFirm = function (c, k, p, how) {
-    const i = this.firms.length, s = this.seed;
+    const i = this.firms.length, s = this.cur;
     const f = { i, cell: c, tech: k, founder: p.i, born: this.year(), size: 4 + 30 * rnd(s, this.t, c, 0x60000000 + (i & 0xffff)),
       peak: 0, peakYear: this.year(), alive: true, died: 0, how,
       name: p.name.split(' ')[1] + ' ' + FIRM_SUFFIX[hash4(s, i, c, 0x63) % FIRM_SUFFIX.length] };
@@ -281,6 +294,18 @@
         for (const c of cells) { this.pop[c] *= 1 - 0.2 * Math.min(m, 2); this.wealth[c] *= 1 - 0.25 * Math.min(m, 2); }
         for (const f of this.firms) if (f.alive && this.ivMask[f.cell] & (1 << (iv.n & 7))) f.size *= Math.max(0.1, 1 - 0.3 * m);
         break;
+      case 'seed': {
+        const T = this.T, a = this.tIndex.get(iv.ah), b = this.tIndex.get(iv.bh);
+        if (a === undefined || b === undefined || this.tIndex.has(iv.tech)) break;
+        const c = iv.cell >= 0 && this.U.land[iv.cell] ? iv.cell : T.cell[a] >= 0 ? T.cell[a] : this.U.landIdx[0];
+        const props = techProps(this.U.us, iv.tech, Math.max(T.depth[a], T.depth[b]) + 1);
+        const k = this.addTech(iv.tech, a, b, c, props, { seeded: true, capP: 1, r1: 0, resP: 1, r2: 0, ea: this.exp[a * C + c], eb: this.exp[b * C + c], priorFails: 0 });
+        if (k < 0) break;
+        this.exp[k * C + c] = 0.3;
+        const idea = this.ideas.get(iv.tech); if (idea) idea.realised = k;
+        const p = this.materialise(c, 'inventor'); T.inv[k] = p.i; p.techs.push(k);
+        break;
+      }
       case 'boost': {
         const mult = 1 + 2 * m; this.boost.set(iv.tech, mult);
         const k = this.tIndex.get(iv.tech); if (k !== undefined) this.T.v[k] *= mult;
@@ -291,7 +316,9 @@
   };
 
   World.prototype.step = function () {
-    const U = this.U, T = this.T, s = this.seed, t = this.t, land = U.landIdx, nL = land.length;
+    const t = this.t;
+    this.cur = this.branch && t >= this.branch.t ? this.branch.seed : this.seed;
+    const U = this.U, T = this.T, s = this.cur, land = U.landIdx, nL = land.length;
     for (const iv of this.iv) if (iv.type !== 'block' && iv.year === this.year()) this.applyIntervention(iv);
 
     // 1. diffusion of knowledge (within-cell logistic adoption + neighbour + global leakage)
@@ -336,12 +363,11 @@
           let idea = this.ideas.get(h);
           if (!idea) { idea = { h, a, b, v: props.v * (this.boost.get(h) || 1), name: techName(h), conceived: 0, failCap: 0, failRes: 0, tries: [], realised: -1 }; this.ideas.set(h, idea); }
           idea.conceived++;
-          // ideas get harder to find as the frontier grows (Bloom et al.)
-          const capP = clamp01(0.3 + 1.1 * (0.5 * this.skill[c] + 0.5 * edu[c]) - 0.8 * props.d) / (1 + T.n / 200), r1 = rnd(s, t, c, 0x40000 + i);
-          const resP = clamp01((0.15 + 0.85 * this.cap[c]) * (props.v > 0.3 ? 0.7 : 1)), r2 = rnd(s, t, c, 0x50000 + i);
+          const capP = this.capProb(c, props.d), r1 = rnd(s, t, c, 0x40000 + i);
+          const resP = this.resProb(c, props.v), r2 = rnd(s, t, c, 0x50000 + i);
           if (r1 >= capP || r2 >= resP) {
             const reason = r1 >= capP ? 'capability' : 'capital';
-            if (reason === 'capability') { idea.failCap++; this.counters.failCap++; } else { idea.failRes++; this.counters.failRes++; }
+            if (reason === 'capability') { idea.failCap++; this.counters.failCap++; this.lostCap[c] += idea.v; } else { idea.failRes++; this.counters.failRes++; this.lostRes[c] += idea.v; }
             if (idea.tries.length < 16) idea.tries.push({ year: this.year(), cell: c, reason });
             continue;
           }
@@ -507,6 +533,81 @@
     return out;
   };
 
+  // ---------- the idea frontier ----------
+  // Every untried combination of existing technologies, scored by direct value, the doors it would
+  // open (valuable combinations of the new idea with everything that exists), and how achievable it
+  // is today in the best-placed region. The landscape is fixed by the universe, so this looks ahead
+  // without simulating.
+  World.prototype.frontier = function (limit) {
+    const T = this.T, n = T.n, us = this.U.us, X = this.exp, land = this.U.landIdx;
+    const cand = [];
+    let pairs = 0;
+    for (let a = 1; a < n; a++) for (let b = 0; b < a; b++) {
+      pairs++;
+      const h = pairHash(T.hash[a], T.hash[b]);
+      if (this.tIndex.has(h) || this.blocked.has(h)) continue;
+      const depth = Math.max(T.depth[a], T.depth[b]) + 1, pr = techProps(us, h, depth);
+      if (pr.v > 0) cand.push({ a, b, h, depth, v: pr.v * (this.boost.get(h) || 1), d: pr.d });
+    }
+    const valuable = cand.length;
+    cand.sort((x, y) => y.v - x.v);
+    const top = cand.slice(0, 400);
+    for (const f of top) {
+      // doors: valuable ideas that become possible once this one exists
+      const kids = [];
+      for (let j = 0; j < n; j++) {
+        const v2 = techProps(us, pairHash(f.h, T.hash[j]), f.depth + 1).v;
+        if (v2 > 0) kids.push(v2);
+      }
+      kids.sort((x, y) => y - x);
+      f.doors = kids.filter(v => v >= 0.2).length;
+      f.option = kids.slice(0, 5).reduce((s, v) => s + v, 0);
+      f.potential = f.v + 0.5 * f.option;
+      // achievability: best region where both parents are known
+      let best = -1, bestP = 0, reach = 0, capAt = 0, resAt = 0, near = -1, nearE = 0;
+      for (const c of land) {
+        const ea = X[f.a * C + c], eb = X[f.b * C + c];
+        if (ea * eb > nearE) { nearE = ea * eb; near = c; }
+        if (ea <= 0.03 || eb <= 0.03) continue;
+        reach++;
+        const cp = this.capProb(c, f.d), rp = this.resProb(c, f.v), pp = cp * rp;
+        if (pp > bestP) { bestP = pp; best = c; capAt = cp; resAt = rp; }
+      }
+      f.reach = reach; f.p = bestP; f.cell = best >= 0 ? best : near;
+      f.bottleneck = best < 0 ? 'knowledge' : capAt < resAt ? 'capability' : 'capital';
+      f.expected = f.potential * f.p;
+      const idea = this.ideas.get(f.h);
+      f.tried = idea ? idea.conceived : 0; f.failCap = idea ? idea.failCap : 0; f.failRes = idea ? idea.failRes : 0;
+      f.name = techName(f.h);
+    }
+    return { pairs, valuable, list: top.sort((x, y) => y.potential - x.potential).slice(0, limit || 30) };
+  };
+
+  // Causal potential of one idea: many futures branching from the current year, each paired with
+  // and without the idea brought into existence now.
+  function testIdea(us, seed, ivs, idea, now, n, onProgress) {
+    const U = makeUniverse(us), rows = [];
+    const seedIv = { type: 'seed', year: START_YEAR + now, tech: idea.h, ah: idea.ah, bh: idea.bh, cell: idea.cell, techName: idea.name };
+    for (let i = 0; i < n; i++) {
+      const branch = { t: now, seed: hash4(seed, i + 1, 0xb7, 0x5eed) };
+      const b = new World(U, seed, ivs, { branch }).runTo(YEARS);
+      const f = new World(U, seed, ivs.concat([seedIv]), { branch }).runTo(YEARS);
+      const kb = b.tIndex.get(idea.h), kf = f.tIndex.get(idea.h);
+      const end = w => { const g = w.series.gdp, p = w.series.pop; return [g[g.length - 1], p[p.length - 1]]; };
+      const [gb, pb] = end(b), [gf, pf] = end(f);
+      rows.push({ head: (gf / pf) / (gb / pb), total: gf / gb, techs: (f.T.n - b.T.n),
+        natural: kb !== undefined ? b.T.year[kb] : 0, desc: kf !== undefined ? f.descendants(kf) : 0,
+        adopt: kf !== undefined ? f.T.adopt[kf] : 0 });
+      if (onProgress) onProgress((i + 1) / n);
+    }
+    const q = (arr, p) => { const s = arr.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1) + 0.5))]; };
+    const nat = rows.filter(r => r.natural).map(r => r.natural);
+    const stat = key => ({ med: q(rows.map(r => r[key]), 0.5), p10: q(rows.map(r => r[key]), 0.1), p90: q(rows.map(r => r[key]), 0.9) });
+    return { n, idea, year: START_YEAR + now, head: { ...stat('head'), better: rows.filter(r => r.head > 1).length },
+      total: stat('total'), techs: stat('techs'), desc: stat('desc'), adopt: stat('adopt'),
+      naturally: nat.length, naturalYear: nat.length ? q(nat, 0.5) : 0 };
+  }
+
   // ---------- ensembles ----------
   function summarise(w) {
     const techs = [];
@@ -546,7 +647,7 @@
     return out;
   }
 
-  const API = { W, H, C, MAXT, START_YEAR, YEARS, NB, TRAITS, makeUniverse, World, runEnsemble, summarise, aggregate, regionName, ivLabel, regionCells, hash4, rnd };
+  const API = { W, H, C, MAXT, START_YEAR, YEARS, NB, TRAITS, makeUniverse, World, runEnsemble, summarise, aggregate, testIdea, regionName, ivLabel, regionCells, hash4, rnd };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   root.Axiomatic = API;
 })(typeof self !== 'undefined' ? self : this);

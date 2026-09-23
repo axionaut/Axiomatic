@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Axiomatic — a causal world engine</title>
   <meta name="description" content="Simulate civilization from a handful of rules. Trace any outcome back to its causes. Change one thing and rerun history.">
-  <link rel="icon" href="data:,">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -66,12 +66,14 @@
     <aside class="side">
       <nav class="tabs" id="tabs">
         <button data-tab="inspect" class="on">Inspect</button>
+        <button data-tab="frontier">Idea frontier</button>
         <button data-tab="people">Changed the world</button>
         <button data-tab="ideas">Unrealised ideas</button>
         <button data-tab="fork">Counterfactual</button>
         <button data-tab="about">How it works</button>
       </nav>
       <div class="panel" id="p-inspect"></div>
+      <div class="panel" id="p-frontier" hidden></div>
       <div class="panel" id="p-people" hidden></div>
       <div class="panel" id="p-ideas" hidden></div>
       <div class="panel" id="p-fork" hidden>

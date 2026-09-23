@@ -13,7 +13,7 @@
 
   const S = {
     us: 42, seed: 1, U: null, base: null, fork: null, ivs: [], view: 'base', layer: 'prod', playing: false,
-    sel: null, tab: 'inspect', picking: false, draft: { cx: 24, cy: 14 }, ens: null, hover: -1,
+    sel: null, tab: 'inspect', front: null, frontSort: 'potential', ideaTest: null, ideaN: 10, picking: false, draft: { cx: 24, cy: 14 }, ens: null, hover: -1,
     back: [], dirty: true, sideDirty: true, lastSide: 0, lastImpact: -1
   };
   const viewW = () => (S.view === 'fork' && S.fork ? S.fork : S.base);
@@ -40,6 +40,8 @@
     { id: 'know', name: 'Knowledge', raw: (w, c) => Math.log1p(w.techSum[c]), dyn: true, show: v => Math.expm1(v).toFixed(2), v: (w, c) => w.techSum[c].toFixed(2) },
     { id: 'conn', name: 'Connectivity', raw: (w, c) => w.conn[c], lo: '0', hi: '100', v: (w, c) => pct(w.conn[c]) },
     { id: 'pop', name: 'Population', raw: (w, c) => Math.log(w.pop[c]), dyn: true, show: v => fmtPop(Math.exp(v)), v: (w, c) => fmtPop(w.pop[c]) },
+    { id: 'lost', name: 'Lost potential', raw: (w, c) => Math.log1p(w.lostCap[c] + w.lostRes[c]), dyn: true, show: v => Math.expm1(v).toFixed(1),
+      v: (w, c) => `${(w.lostCap[c] + w.lostRes[c]).toFixed(1)} (skill ${w.lostCap[c].toFixed(1)} · capital ${w.lostRes[c].toFixed(1)})` },
     { id: 'firms', name: 'Enterprise', raw: (w, c) => w.femp[c] / w.pop[c], dyn: true, show: v => pct(v) + '%', v: (w, c) => pct(w.femp[c] / w.pop[c]) + '% in firms' },
     { id: 'div', name: 'Divergence', diverging: true, raw: (w, c) => Math.log(S.fork.prod[c] / S.base.prod[c]),
       v: (w, c) => signPct(S.fork.prod[c] / S.base.prod[c]) }
@@ -343,6 +345,7 @@
     const panel = $('#p-' + S.tab), keep = panel.scrollTop;
     if (S.tab === 'inspect') { panel.innerHTML = inspectHtml(); S.sideRendered = selKey(); }
     else if (S.tab === 'people') panel.innerHTML = peopleHtml();
+    else if (S.tab === 'frontier') panel.innerHTML = frontierHtml();
     else if (S.tab === 'ideas') panel.innerHTML = ideasHtml();
     else if (S.tab === 'about') panel.innerHTML = aboutHtml();
     else if (S.tab === 'fork') renderIvList();
@@ -401,6 +404,7 @@
         <span>Working in firms</span><span>${pct(w.femp[c] / w.pop[c])}%</span>
         <span>Technologies known</span><span>${known.length}</span>
         <span>Institutions (axiom)</span><span>${pct(S.U.inst[c])}</span>
+        <span>Lost potential <span class="meta">(value of ideas that died here)</span></span><span>${(w.lostCap[c] + w.lostRes[c]).toFixed(1)} <span class="meta">skill ${w.lostCap[c].toFixed(1)} · capital ${w.lostRes[c].toFixed(1)}</span></span>
         <span>Coastal</span><span>${S.U.coastal[c] ? 'yes' : 'no'}</span>
       </div>
       ${ivs.length ? `<div class="card">Altered by: ${ivs.map(v => esc(A.ivLabel(v))).join('; ')}</div>` : ''}
@@ -436,9 +440,9 @@
         <span>Firms built on it</span><span>${firms.length} <span class="meta">(${Math.round(aliveEmp).toLocaleString()} employed now)</span></span>
       </div>
       <h3>Chance</h3>
-      <div class="card">
+      <div class="card">${m.seeded ? `${badge('recorded')} Brought into existence by your intervention — no chance involved.` : `
         ${badge('recorded')} Capability roll ${m.r1.toFixed(3)} needed &lt; ${m.capP.toFixed(3)}; capital roll ${m.r2.toFixed(3)} needed &lt; ${m.resP.toFixed(3)}.<br>
-        <span class="meta">Margin: ${pct((m.capP - m.r1))} and ${pct((m.resP - m.r2))} points. ${idea && m.priorFails ? `This idea had already died ${m.priorFails}× elsewhere${idea.tries.length ? ` (first ${idea.tries[0].year}, lacking ${idea.tries[0].reason})` : ''}.` : 'First serious attempt anywhere.'}</span>
+        <span class="meta">Margin: ${pct((m.capP - m.r1))} and ${pct((m.resP - m.r2))} points. ${idea && m.priorFails ? `This idea had already died ${m.priorFails}× elsewhere${idea.tries.length ? ` (first ${idea.tries[0].year}, lacking ${idea.tries[0].reason})` : ''}.` : 'First serious attempt anywhere.'}</span>`}
       </div>
       <h3>Causal ancestry</h3>
       <div class="tree">${node('tech', k, esc(T.name[k]), true)}</div>`;
@@ -525,6 +529,81 @@
     ev.preventDefault();
     const [kind, id] = a.dataset.go.split(':');
     select(kind, +id);
+  });
+
+  // ---------- idea frontier ----------
+  function frontierList() {
+    const w = viewW();
+    if (!S.front || S.front.w !== w || S.front.t !== w.t) S.front = { w, t: w.t, f: w.frontier(40) };
+    const byExp = S.frontSort === 'expected';
+    return S.front.f.list.slice().sort((a, b) => byExp ? b.expected - a.expected : b.potential - a.potential).slice(0, 25);
+  }
+  function frontierHtml() {
+    const w = viewW(), list = frontierList(), F = S.front.f, byExp = S.frontSort === 'expected';
+    const max = Math.max(...list.map(f => byExp ? f.expected : f.potential), 1e-9);
+    const test = S.ideaTest;
+    const lost = S.U.landIdx.map(c => [c, w.lostCap[c] + w.lostRes[c]]).sort((a, b) => b[1] - a[1]).slice(0, 6).filter(x => x[1] > 0);
+    return `<p class="title">Idea frontier · ${w.year()}</p>
+      <p class="sub">Every idea is a combination of what already exists. Of ${F.pairs.toLocaleString()} possible combinations of today's ${w.T.n} technologies, <b>${F.valuable.toLocaleString()}</b> would be valuable and nobody has made them yet. Ranked by <b>potential</b>: own value + half the value of the 5 best ideas it would unlock.</p>
+      ${test ? testHtml(test) : ''}
+      <div class="seg" style="margin:4px 0 8px"><button data-fsort="potential" class="${byExp ? '' : 'on'}">Highest potential</button><button data-fsort="expected" class="${byExp ? 'on' : ''}">Most achievable now</button></div>
+      <ul class="list">${list.map((f, i) => {
+        const where = f.cell >= 0 ? link('cell', f.cell, A.regionName(S.us, f.cell)) : '—';
+        const why = f.bottleneck === 'knowledge' ? `no region knows both parts yet (closest: ${where})` : `best chance ${f.p < 0.001 ? '&lt;0.1' : (f.p * 100).toFixed(1)}% per try in ${where} · held back by ${f.bottleneck}`;
+        return `<li><span class="meta">${i + 1}.</span> <b>${esc(f.name)}</b> <span class="meta">= ${techLink(w, f.a)} + ${techLink(w, f.b)}</span>
+          <div class="bar" style="width:${Math.max(2, (byExp ? f.expected : f.potential) / max * 100)}%"></div>
+          <div class="small">value ${f.v.toFixed(2)} · unlocks ${f.doors} valuable idea${f.doors === 1 ? '' : 's'} · potential ${f.potential.toFixed(2)}</div>
+          <div class="meta">${why}${f.tried ? ` · tried ${f.tried}× (failed: skill ${f.failCap}, capital ${f.failRes})` : ' · never tried'}</div>
+          <button class="small" data-test="${i}" ${test && test.running ? 'disabled' : ''}>Test in many worlds</button></li>`;
+      }).join('')}</ul>
+      <h3>Where potential is being lost</h3>
+      ${lost.length ? `<ul class="list">${lost.map(([c, v]) => `<li>${link('cell', c, A.regionName(S.us, c))} <span class="meta">${xy(c)} · ${v.toFixed(1)} of value died here · mostly ${w.lostCap[c] >= w.lostRes[c] ? 'lacking skill' : 'lacking capital'}</span></li>`).join('')}</ul>
+        <div class="row"><button data-layer-go="lost">Show on map</button></div>` : '<p class="muted small">Nothing lost yet.</p>'}
+      <p class="small muted">The idea landscape is fixed by the universe seed, so the frontier can look ahead without simulating. "Test in many worlds" is the causal check: it branches ${S.ideaN} futures from ${w.year()} and compares each one with and without the idea.</p>`;
+  }
+  function testHtml(T) {
+    if (T.running) return `<div class="card">Testing <b>${esc(T.idea.name)}</b> across ${S.ideaN} futures… <div class="prog"><div style="width:${(T.progress * 100).toFixed(0)}%"></div></div></div>`;
+    const r = T.res, h = r.head, up = h.med >= 1;
+    const verdict = r.naturally >= r.n * 0.8 ? 'it was coming anyway; the gain is mostly from having it sooner.'
+      : r.naturally === 0 ? 'the world would not have found it on its own.' : 'without help it might never have arrived.';
+    return `<div class="card"><b>${esc(r.idea.name)}</b> brought into existence in ${r.year} · ${r.n} paired futures
+      <div class="big ${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${signPct(h.med)} <span class="small muted">output per head by ${START_YEAR + YEARS}</span></div>
+      10–90%: ${signPct(h.p10)} to ${signPct(h.p90)} · higher in ${h.better} of ${r.n} futures<br>
+      Later ideas built on it: ${r.desc.med} <span class="meta">(${r.desc.p10}–${r.desc.p90})</span> · adoption by ${START_YEAR + YEARS}: ${pct(r.adopt.med)}%<br>
+      Without help it appeared in <b>${r.naturally} of ${r.n}</b> futures${r.naturally ? ` (typically ${r.naturalYear})` : ''} — ${verdict}
+      <div class="row"><button data-seed-fork>Add as intervention</button></div></div>`;
+  }
+  function testIdea(f) {
+    const w = viewW(), ivs = S.view === 'fork' && S.fork ? S.ivs.slice() : [];
+    const idea = { h: f.h, ah: w.T.hash[f.a], bh: w.T.hash[f.b], cell: f.cell, name: f.name };
+    const msg = { type: 'idea', us: S.us, seed: S.seed, ivs, idea, now: w.t, n: S.ideaN };
+    S.ideaTest = { running: true, progress: 0, idea };
+    S.playing = false; renderSide(true);
+    const done = res => { S.ideaTest = { running: false, res, idea }; renderSide(true); };
+    const prog = p => {
+      if (!S.ideaTest || !S.ideaTest.running) return;
+      S.ideaTest.progress = p;
+      const bar = document.querySelector('#p-frontier .card .prog div');
+      if (bar) bar.style.width = (p * 100).toFixed(0) + '%';
+    };
+    const inline = () => setTimeout(() => done(A.testIdea(msg.us, msg.seed, msg.ivs, idea, msg.now, msg.n, prog)), 30);
+    let wk = null;
+    try { wk = new Worker('worker.js'); } catch (e) { wk = null; }
+    if (!wk) return inline();
+    wk.onmessage = e => { if (e.data.progress != null) prog(e.data.progress); if (e.data.result) { wk.terminate(); done(e.data.result); } };
+    wk.onerror = e => { e.preventDefault(); wk.terminate(); inline(); };
+    wk.postMessage(msg);
+  }
+  $('#p-frontier').addEventListener('click', ev => {
+    const t = ev.target.closest('[data-test]'), srt = ev.target.closest('[data-fsort]'), lg = ev.target.closest('[data-layer-go]');
+    if (t) testIdea(frontierList()[+t.dataset.test]);
+    else if (srt) { S.frontSort = srt.dataset.fsort; renderSide(true); }
+    else if (lg) { S.layer = lg.dataset.layerGo; renderLayers(); S.dirty = true; }
+    else if (ev.target.closest('[data-seed-fork]') && S.ideaTest && S.ideaTest.res) {
+      const r = S.ideaTest.res;
+      S.ivs.push({ type: 'seed', year: r.year, tech: r.idea.h, ah: r.idea.ah, bh: r.idea.bh, cell: r.idea.cell, techName: r.idea.name, radius: 99 });
+      syncForkUi(); setTab('fork');
+    }
   });
 
   function peopleHtml() {

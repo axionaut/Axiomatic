@@ -12,6 +12,8 @@ See [CONCEPT.md](CONCEPT.md) for the idea in full.
 - **Causal trace:** every technology, person and firm opens into an expandable ancestry tree. Each link is tagged **RECORDED** (computed when it happened) or **RECONSTRUCTED** (sampled afterwards to stay consistent with the record).
 - **Rewind and fork:** the world is fully deterministic. Add interventions (education, capital, connectivity, war or disaster, boosting a technology, preventing a technology) and replay with the same chance seed.
 - **Many worlds:** paired ensembles give an intervention's effect with a spread. They also show which technologies are attractors (appear in ≥80% of worlds) and which are contingent (≤25%).
+- **Idea frontier:** lists every valuable combination nobody has made yet. Each is scored by potential (its own value plus the value of the ideas it would unlock) and by how achievable it is in the best-placed region. It also names the bottleneck: knowledge, capability or capital.
+- **Test an idea in many worlds:** branches paired futures from the current year, with and without the idea brought into existence now. It measures the effect on output per head, how much later work is built on it, and whether the world would have found it on its own.
 - **Unrealised potential:** valuable ideas that kept dying, broken down by bottleneck (capability or capital).
 
 ## Run
@@ -31,4 +33,4 @@ Then open http://localhost:8000. Opening `index.html` directly from disk also wo
 | `engine.js` | Deterministic simulation: universe, world, materialisation, biography, ensembles. No DOM; also runs in Node. |
 | `app.js` | UI: map, transport, inspector, causal tree, counterfactuals, charts. |
 | `worker.js` | Runs ensembles off the main thread. |
-| `index.html`, `styles.css` | Page and styling. |
+| `index.html`, `styles.css`, `favicon.svg` | Page, styling and icon. |
