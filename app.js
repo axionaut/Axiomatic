@@ -917,6 +917,7 @@
     requestAnimationFrame(frame);
   }
 
+  $('#ver').textContent = 'v' + A.VERSION;
   $('#scrub').max = YEARS;
   $('#ivYear').min = START_YEAR; $('#ivYear').max = END_YEAR - 1; $('#ivYear').value = PRESENT;
   $('#ivYearRel').textContent = rel(PRESENT);

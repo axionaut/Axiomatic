@@ -43,6 +43,7 @@ h3:first-child { margin-top: 4px; }
   padding: 12px 20px; border-bottom: 1px solid var(--border);
 }
 .brand h1 { margin: 0; font-size: 20px; letter-spacing: 0.32em; font-weight: 700; }
+.brand .ver { font-size: 11px; font-weight: 500; letter-spacing: 0.05em; color: var(--ink-2); vertical-align: middle; }
 .brand p { margin: 2px 0 0; color: var(--ink-2); font-size: 13px; }
 .seeds { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .seeds label { color: var(--ink-2); font-size: 12px; display: flex; align-items: center; gap: 6px; }

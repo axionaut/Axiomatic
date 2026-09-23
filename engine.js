@@ -8,6 +8,7 @@
 (function (root) {
   'use strict';
 
+  const VERSION = '0.2';          // bump on every user-visible release
   const W = 48, H = 28, C = W * H;
   const MAXT = 1000;              // technology slots per world
   // Time is anchored to the present. The past runs from the start of the real data (the 1900 toolkit)
@@ -767,7 +768,7 @@
     return out;
   }
 
-  const API = { W, H, C, MAXT, START_YEAR, YEARS, PRESENT, NOW_T, FUTURE, END_YEAR, rel, NB, REAL, FP, evidence, TRAITS, makeUniverse, World, runEnsemble, summarise, aggregate, testIdea, regionName, ivLabel, regionCells, hash4, rnd };
+  const API = { VERSION, W, H, C, MAXT, START_YEAR, YEARS, PRESENT, NOW_T, FUTURE, END_YEAR, rel, NB, REAL, FP, evidence, TRAITS, makeUniverse, World, runEnsemble, summarise, aggregate, testIdea, regionName, ivLabel, regionCells, hash4, rnd };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   root.Axiomatic = API;
 })(typeof self !== 'undefined' ? self : this);
