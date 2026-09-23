@@ -14,7 +14,7 @@
   const S = {
     us: 42, seed: 1, U: null, base: null, fork: null, ivs: [], view: 'base', layer: 'prod', playing: false,
     sel: null, tab: 'inspect', picking: false, draft: { cx: 24, cy: 14 }, ens: null, hover: -1,
-    dirty: true, sideDirty: true, lastSide: 0, lastImpact: -1
+    back: [], dirty: true, sideDirty: true, lastSide: 0, lastImpact: -1
   };
   const viewW = () => (S.view === 'fork' && S.fork ? S.fork : S.base);
 
@@ -50,7 +50,7 @@
     S.us = Math.max(1, +$('#us').value | 0); S.seed = Math.max(1, +$('#hs').value | 0);
     S.U = A.makeUniverse(S.us);
     S.base = new A.World(S.U, S.seed, []);
-    S.fork = null; S.view = 'base'; S.sel = null; S.ens = null; S.playing = false;
+    S.fork = null; S.view = 'base'; S.sel = null; S.back = []; S.ens = null; S.playing = false;
     $('#ensOut').innerHTML = '';
     syncForkUi(); markAll();
   }
@@ -72,8 +72,9 @@
   }
   function validateSel() {
     const w = viewW(), s = S.sel;
-    if (!s) return;
-    if ((s.kind === 'tech' && s.id >= w.T.n) || (s.kind === 'person' && s.id >= w.people.length) || (s.kind === 'firm' && s.id >= w.firms.length)) S.sel = null;
+    const gone = x => (x.kind === 'tech' && x.id >= w.T.n) || (x.kind === 'person' && x.id >= w.people.length) || (x.kind === 'firm' && x.id >= w.firms.length);
+    S.back = S.back.filter(x => !gone(x));
+    if (s && gone(s)) S.sel = null;
   }
   const markAll = () => { S.dirty = true; S.sideDirty = true; };
 
@@ -309,7 +310,15 @@
 
   // ---------- side panel ----------
   function select(kind, id) {
+    if (S.sel && !(S.sel.kind === kind && S.sel.id === id)) S.back.push(S.sel);
     S.sel = { kind, id }; setTab('inspect'); markAll();
+    $('#p-inspect').scrollTop = 0;
+  }
+  // return to the previous selection, or to the events timeline when there is none
+  function goBack(all) {
+    S.sel = all ? null : S.back.pop() || null;
+    if (all) S.back = [];
+    setTab('inspect'); markAll();
     $('#p-inspect').scrollTop = 0;
   }
   function setTab(t) {
@@ -344,6 +353,9 @@
   function inspectHtml() {
     const w = viewW(), s = S.sel;
     if (!s) return overviewHtml(w);
+    return `<div class="crumbs">${S.back.length ? '<a class="ln" data-nav="back">← Back</a> · ' : ''}<a class="ln" data-nav="home">${S.back.length ? '' : '← '}Events timeline</a></div>` + entityHtml(w, s);
+  }
+  function entityHtml(w, s) {
     if (s.kind === 'cell') return cellHtml(w, s.id);
     if (s.kind === 'tech') return techHtml(w, s.id);
     if (s.kind === 'person') return personHtml(w, s.id);
@@ -506,6 +518,8 @@
     if (d.children.length <= 1) d.insertAdjacentHTML('beforeend', children(d.dataset.k, +d.dataset.i));
   }, true);
   document.querySelector('.side').addEventListener('click', ev => {
+    const nav = ev.target.closest('[data-nav]');
+    if (nav) { ev.preventDefault(); return goBack(nav.dataset.nav === 'home'); }
     const a = ev.target.closest('[data-go]');
     if (!a) return;
     ev.preventDefault();
@@ -722,7 +736,12 @@
     if (!b) return;
     S.layer = b.dataset.layer; renderLayers(); S.dirty = true;
   });
-  $('#tabs').addEventListener('click', ev => { const b = ev.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); });
+  $('#tabs').addEventListener('click', ev => {
+    const b = ev.target.closest('[data-tab]');
+    if (!b) return;
+    if (b.dataset.tab === 'inspect' && S.tab === 'inspect' && S.sel) return goBack(true);   // second click on Inspect = timeline
+    setTab(b.dataset.tab);
+  });
   $('#showPeople').addEventListener('change', () => { S.dirty = true; });
   $('#play').addEventListener('click', () => { if (S.base.t >= YEARS) return; S.playing = !S.playing; S.dirty = true; });
   $('#step').addEventListener('click', () => { S.playing = false; advance(); markAll(); });
@@ -735,6 +754,7 @@
     if (ev.target.matches('input, select, textarea')) return;
     if (ev.code === 'Space') { ev.preventDefault(); $('#play').click(); }
     if (ev.key === 'Escape' && S.picking) { S.picking = false; $('#pickHint').hidden = true; S.dirty = true; }
+    else if (ev.key === 'Escape' && S.sel) goBack(false);
   });
   window.addEventListener('resize', () => { S.dirty = true; });
 

@@ -109,6 +109,7 @@ h3:first-child { margin-top: 4px; }
 .sub { color: var(--ink-2); font-size: 12.5px; margin-bottom: 10px; }
 a.ln { color: #86b6ef; text-decoration: none; cursor: pointer; }
 a.ln:hover { text-decoration: underline; }
+.crumbs { font-size: 12.5px; margin: -2px 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--grid); }
 
 .dist { display: grid; grid-template-columns: 84px 1fr 34px; gap: 4px 8px; align-items: center; font-size: 12px; }
 .dist .track { position: relative; height: 8px; background: var(--surface-2); border-radius: 4px; }
