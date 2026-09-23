@@ -13,7 +13,7 @@
 
   const S = {
     us: 42, seed: 1, U: null, base: null, fork: null, ivs: [], view: 'base', layer: 'prod', playing: false,
-    sel: null, tab: 'inspect', front: null, frontSort: 'potential', ideaTest: null, ideaN: 10, picking: false, draft: { cx: 24, cy: 14 }, ens: null, hover: -1,
+    sel: null, tab: 'inspect', front: null, frontSort: 'potential', frontKind: 'all', ideaTest: null, ideaN: 10, picking: false, draft: { cx: 24, cy: 14 }, ens: null, hover: -1,
     back: [], dirty: true, sideDirty: true, lastSide: 0, lastImpact: -1
   };
   const viewW = () => (S.view === 'fork' && S.fork ? S.fork : S.base);
@@ -366,10 +366,27 @@
     return '';
   }
 
+  // what the same technology looked like in our world (Wikidata)
+  function realHtml(r) {
+    if (!r) return `<div class="card small"><span class="badge recon">SPECULATIVE</span>Never made in our world — a combination the model considers possible. Its value is an estimate, not a fact.</div>`;
+    return `<div class="card small"><span class="badge rec">REAL</span><b>In our world:</b> ${r.year < 0 ? 'ancient' : r.year}${r.inventors.length ? ' · ' + r.inventors.map(esc).join(', ') : ''}${r.desc ? `<br><span class="meta">${esc(r.desc)}</span>` : ''}
+      ${r.qid ? `<br><a class="ln" href="https://www.wikidata.org/wiki/${r.qid}" target="_blank" rel="noopener">Wikidata ${r.qid}</a> · ${r.sitelinks} Wikipedia editions` : ''}</div>`;
+  }
+  function realCheckHtml(w) {
+    const r = w.realCheck();
+    if (r.found < 5) return `<div class="card small"><b>Real-history check</b> <span class="meta">— ${r.found} of ${r.total} real inventions so far; the order is compared once there are five.</span></div>`;
+    return `<div class="card small"><b>Real-history check</b> <span class="meta">— our world used as the benchmark</span><div class="kv" style="margin-top:4px">
+      <span>Real inventions made</span><span>${r.found} of ${r.total}</span>
+      <span>Order vs our world (rank correlation, 1 = same)</span><span>${r.rho.toFixed(2)}</span>
+      <span>Typical timing error</span><span>${r.mae.toFixed(0)} years</span>
+      <span>Within 15 years of the real date</span><span>${r.within}</span></div></div>`;
+  }
+
   function overviewHtml(w) {
     const ev = w.events.filter(e => e.weight >= 0.12).slice(-60).reverse();
     return `<p class="title">${S.view === 'fork' ? 'Fork' : 'Baseline'} world · ${w.year()}</p>
       <p class="sub">Click a region, a white dot (a materialised person) or anything underlined. Everything consequential can be traced back to its causes.</p>
+      ${realCheckHtml(w)}
       <h3>Consequential events</h3>
       ${ev.length ? `<ul class="list">${ev.map(e => `<li><span class="meta">${e.year}</span> ${eventText(w, e)}</li>`).join('')}</ul>` : '<p class="muted">Nothing consequential yet. Press Run.</p>'}`;
   }
@@ -424,7 +441,7 @@
     const firms = w.firms.filter(f => f.tech === k);
     const aliveEmp = firms.filter(f => f.alive).reduce((s, f) => s + f.size, 0);
     if (T.a[k] < 0) {
-      return `<p class="title">${esc(T.name[k])}</p><p class="sub">Axiom — present at the start of the world. Where it is known is set by the universe seed.</p>
+      return `<p class="title">${esc(T.name[k])}</p><p class="sub">Axiom — present at the start of the world. Where it is known is set by the universe seed.</p>${realHtml(T.real[k])}
         <div class="kv"><span>Adoption worldwide</span><span>${pct(T.adopt[k])}%</span><span>Technologies descended from it</span><span>${w.descendants(k)}</span>
         <span>Firms built on it</span><span>${firms.length}</span></div>`;
     }
@@ -439,6 +456,7 @@
         <span>Technologies descended from it</span><span>${w.descendants(k)}</span>
         <span>Firms built on it</span><span>${firms.length} <span class="meta">(${Math.round(aliveEmp).toLocaleString()} employed now)</span></span>
       </div>
+      ${realHtml(T.real[k])}
       <h3>Chance</h3>
       <div class="card">${m.seeded ? `${badge('recorded')} Brought into existence by your intervention — no chance involved.` : `
         ${badge('recorded')} Capability roll ${m.r1.toFixed(3)} needed &lt; ${m.capP.toFixed(3)}; capital roll ${m.r2.toFixed(3)} needed &lt; ${m.resP.toFixed(3)}.<br>
@@ -536,7 +554,8 @@
     const w = viewW();
     if (!S.front || S.front.w !== w || S.front.t !== w.t) S.front = { w, t: w.t, f: w.frontier(40) };
     const byExp = S.frontSort === 'expected';
-    return S.front.f.list.slice().sort((a, b) => byExp ? b.expected - a.expected : b.potential - a.potential).slice(0, 25);
+    const src = S.frontKind === 'real' ? S.front.f.real : S.frontKind === 'spec' ? S.front.f.spec : S.front.f.list;
+    return src.slice().sort((a, b) => byExp ? b.expected - a.expected : b.potential - a.potential).slice(0, 25);
   }
   function frontierHtml() {
     const w = viewW(), list = frontierList(), F = S.front.f, byExp = S.frontSort === 'expected';
@@ -546,11 +565,16 @@
     return `<p class="title">Idea frontier · ${w.year()}</p>
       <p class="sub">Every idea is a combination of what already exists. Of ${F.pairs.toLocaleString()} possible combinations of today's ${w.T.n} technologies, <b>${F.valuable.toLocaleString()}</b> would be valuable and nobody has made them yet. Ranked by <b>potential</b>: own value + half the value of the 5 best ideas it would unlock.</p>
       ${test ? testHtml(test) : ''}
-      <div class="seg" style="margin:4px 0 8px"><button data-fsort="potential" class="${byExp ? '' : 'on'}">Highest potential</button><button data-fsort="expected" class="${byExp ? 'on' : ''}">Most achievable now</button></div>
+      <div class="row" style="margin:4px 0 8px">
+        <div class="seg"><button data-fkind="all" class="${S.frontKind === 'all' ? 'on' : ''}">All</button><button data-fkind="real" class="${S.frontKind === 'real' ? 'on' : ''}">Real</button><button data-fkind="spec" class="${S.frontKind === 'spec' ? 'on' : ''}">Speculative</button></div>
+        <div class="seg"><button data-fsort="potential" class="${byExp ? '' : 'on'}">Highest potential</button><button data-fsort="expected" class="${byExp ? 'on' : ''}">Most achievable now</button></div>
+      </div>
+      ${S.frontKind === 'real' ? `<p class="small muted">Real inventions this world hasn't made yet. Their real dates are shown only for comparison; the model doesn't use them.</p>` : ''}
       <ul class="list">${list.map((f, i) => {
         const where = f.cell >= 0 ? link('cell', f.cell, A.regionName(S.us, f.cell)) : '—';
         const why = f.bottleneck === 'knowledge' ? `no region knows both parts yet (closest: ${where})` : `best chance ${f.p < 0.001 ? '&lt;0.1' : (f.p * 100).toFixed(1)}% per try in ${where} · held back by ${f.bottleneck}`;
-        return `<li><span class="meta">${i + 1}.</span> <b>${esc(f.name)}</b> <span class="meta">= ${techLink(w, f.a)} + ${techLink(w, f.b)}</span>
+        const tag = f.real ? `<span class="badge rec" title="${esc(f.real.desc)}">REAL · ${f.real.year}</span>` : '<span class="badge recon">SPECULATIVE</span>';
+        return `<li><span class="meta">${i + 1}.</span> ${tag}<b>${esc(f.name)}</b> <span class="meta">= ${techLink(w, f.a)} + ${techLink(w, f.b)}</span>
           <div class="bar" style="width:${Math.max(2, (byExp ? f.expected : f.potential) / max * 100)}%"></div>
           <div class="small">value ${f.v.toFixed(2)} · unlocks ${f.doors} valuable idea${f.doors === 1 ? '' : 's'} · potential ${f.potential.toFixed(2)}</div>
           <div class="meta">${why}${f.tried ? ` · tried ${f.tried}× (failed: skill ${f.failCap}, capital ${f.failRes})` : ' · never tried'}</div>
@@ -595,7 +619,8 @@
     wk.postMessage(msg);
   }
   $('#p-frontier').addEventListener('click', ev => {
-    const t = ev.target.closest('[data-test]'), srt = ev.target.closest('[data-fsort]'), lg = ev.target.closest('[data-layer-go]');
+    const t = ev.target.closest('[data-test]'), srt = ev.target.closest('[data-fsort]'), lg = ev.target.closest('[data-layer-go]'), kind = ev.target.closest('[data-fkind]');
+    if (kind) { S.frontKind = kind.dataset.fkind; return renderSide(true); }
     if (t) testIdea(frontierList()[+t.dataset.test]);
     else if (srt) { S.frontSort = srt.dataset.fsort; renderSide(true); }
     else if (lg) { S.layer = lg.dataset.layerGo; renderLayers(); S.dirty = true; }
@@ -645,7 +670,8 @@
       <p class="title">How Axiomatic works</p>
       <p><b>Seed thought.</b> All ideas are possibilities with different probabilities, and those probabilities come from combining a finite — but seemingly infinite — set of things.</p>
       <p><b>Cells, not agents.</b> Humanity is ${S.U.landIdx.length} statistical cells. Each holds trait <em>distributions</em> (education, skill, creativity, risk appetite, capital access, connectivity) for millions of people.</p>
-      <p><b>Ideas are combinations.</b> Every invention combines two existing technologies. Only the <em>adjacent possible</em> is ever evaluated: combinations of things a region already knows. Which combinations are valuable is fixed by the universe seed, so the physics of ideas is the same in every history.</p>
+      <p><b>Ideas are combinations.</b> Every invention combines two existing technologies. Only the <em>adjacent possible</em> is ever evaluated: combinations of things a region already knows.</p>
+      <p><b>Real technologies.</b> The world starts in 1900 with ${A.NB} real technologies (steam engine, telephone, X-ray…). ${A.REAL.inventions} real later inventions are fixed points of the idea landscape: each is the combination of its two key ingredients, e.g. Transistor = Quantum mechanics + Vacuum tube. Their importance comes from how many Wikipedia language editions cover them (Wikidata, CC0). Every other combination is ${badge('reconstructed').replace('RECONSTRUCTED', 'SPECULATIVE')}: possible in the model, never made in our world, valued by estimate. Our world is the benchmark: the real-history check measures how closely the simulated order of inventions follows the real one.</p>
       <p><b>Computation follows consequence.</b> Each cell has an expected idea rate. Only the draws that matter become objects. When one succeeds, the cell splits and the originating person is <em>materialised</em>, sampled conditioned on having done it.</p>
       <p><b>Recorded vs reconstructed.</b> Anything computed as it happened is ${badge('recorded')}: conditions, chance rolls, the ideas combined, interventions. A materialised person's earlier life is ${badge('reconstructed')}: plausible and consistent with the recorded world, but not observed.</p>
       <p><b>Determinism.</b> Every random draw is a hash of (seed, year, cell, event). Rewinding replays exactly. A fork uses the same numbers, so it differs only where your change caused a difference.</p>
@@ -780,7 +806,10 @@
     html += `<div class="card"><b>Reality checks</b> <span class="meta">(emergent — not programmed)</span><div class="kv" style="margin-top:6px">
       <span>Firm-size Zipf exponent (real ≈ 1.0)</span><span>${isFinite(r.base.zipf) ? r.base.zipf.toFixed(2) : '—'}</span>
       <span>Regional Gini in ${START_YEAR + YEARS}</span><span>${r.base.gini.toFixed(2)}</span>
-      <span>Technologies by ${START_YEAR + YEARS}</span><span>${r.base.nTech}</span></div></div>`;
+      <span>Technologies by ${START_YEAR + YEARS}</span><span>${r.base.nTech}</span>
+      <span>Real inventions made (of ${r.base.realTotal})</span><span>${r.base.realFound}</span>
+      <span>Order vs our world (rank correlation)</span><span>${isFinite(r.base.realRho) ? r.base.realRho.toFixed(2) : '—'}</span>
+      <span>Typical timing error</span><span>${isFinite(r.base.realMae) ? r.base.realMae.toFixed(0) + ' years' : '—'}</span></div></div>`;
     // contingency of this history's technologies
     const mine = [];
     for (let k = NB; k < w.T.n; k++) {

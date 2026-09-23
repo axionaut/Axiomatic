@@ -11,11 +11,8 @@
   const W = 48, H = 28, C = W * H;
   const MAXT = 1000;              // technology slots per world
   const START_YEAR = 1900, YEARS = 160;
-  const NB = 16;                 // base technologies
-  const P = { inv: 0.12, firm: 0.03 };
+  const P = { inv: 0.05, firm: 0.03, related: 0.7 };
 
-  const BASE_NAMES = ['Fire', 'Agriculture', 'Metallurgy', 'Writing', 'Wheel', 'Masonry', 'Trade', 'Medicine',
-    'Mathematics', 'Optics', 'Textiles', 'Navigation', 'Chemistry', 'Mechanics', 'Printing', 'Law'];
   const PREFIX = ['Steam', 'Electro', 'Hydro', 'Aero', 'Bio', 'Photo', 'Magneto', 'Thermo', 'Micro', 'Poly',
     'Nano', 'Quantum', 'Crypto', 'Geo', 'Chrono', 'Sono', 'Cyto', 'Litho', 'Radio', 'Petro'];
   const NOUN = ['engine', 'loom', 'press', 'cell', 'grid', 'lens', 'alloy', 'reactor', 'network', 'vaccine',
@@ -58,15 +55,53 @@
   const cap1 = s => s.charAt(0).toUpperCase() + s.slice(1);
 
   // ---------- the idea landscape (universe-level, identical across histories) ----------
-  const baseHash = i => hash4(0xa5a5a5a5, i, 0, 0x2c);
   const pairHash = (ha, hb) => (ha < hb ? hash4(0x51ed270b, ha, hb, 0x1f) : hash4(0x51ed270b, hb, ha, 0x1f));
+  function strHash(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 0x01000193);
+    return mix(h);
+  }
+
+  // Real technologies (data/techgraph.js, curated + Wikidata). Axioms are the 1900 toolkit; every later
+  // real technology is the combination of its two key ingredients, so it sits at a fixed point of the
+  // idea landscape. Every other combination is speculative.
+  const TG = root.AXIOMATIC_TECHGRAPH || (typeof require === 'function' ? require('./data/techgraph.js') : null);
+  if (!TG) throw new Error('Axiomatic: load data/techgraph.js before engine.js');
+  const REAL = { axioms: [], byHash: new Map(), partners: new Map(), inventions: 0 };
+  (() => {
+    const hashOf = new Map();
+    const link = (x, y) => { if (!REAL.partners.has(x)) REAL.partners.set(x, []); REAL.partners.get(x).push(y); };
+    for (const t of TG.techs) {
+      if (!t.parents.length) {
+        const h = strHash('axiom:' + t.id);
+        hashOf.set(t.id, h); REAL.axioms.push({ ...t, h }); REAL.byHash.set(h, t);
+        continue;
+      }
+      const ha = hashOf.get(t.parents[0]), hb = hashOf.get(t.parents[1]), h = pairHash(ha, hb);
+      hashOf.set(t.id, h); REAL.byHash.set(h, t); REAL.inventions++;
+      link(ha, hb); link(hb, ha);
+    }
+  })();
+  const NB = REAL.axioms.length;   // axioms: technologies that exist at t = 0
+  const realValue = t => Math.min(2.5, Math.max(0.03, 0.02 * Math.pow(t.sitelinks / 10, 1.2)));
+
   function techProps(us, h, depth) {
+    const real = REAL.byHash.get(h);
+    if (real) return { v: realValue(real), d: Math.min(0.95, 0.12 + 0.3 * rnd(us, h, 3, 0) + 0.045 * depth), real };
     const dud = rnd(us, h, 1, 0) < 0.55;
-    const v = dud ? 0 : Math.min(3, 0.015 * Math.pow(1 - rnd(us, h, 2, 0) * 0.999, -1 / 1.25) * (1 + 0.08 * depth));
+    // speculative value: heavy-tailed estimate, capped below the most important real inventions
+    const v = dud ? 0 : Math.min(0.8, 0.012 * Math.pow(1 - rnd(us, h, 2, 0) * 0.999, -1 / 1.25) * (1 + 0.08 * depth));
     const d = Math.min(0.95, 0.12 + 0.55 * rnd(us, h, 3, 0) + 0.045 * depth);
     return { v, d };
   }
-  const techName = h => PREFIX[h % PREFIX.length] + NOUN[(h >>> 8) % NOUN.length];
+  // real technologies keep their names; speculative ones are named after what they combine
+  function nameFor(h, na, nb) {
+    const real = REAL.byHash.get(h);
+    if (real) return real.name;
+    if (na && nb && na.length + nb.length <= 34 && !/×|Hybrid/.test(na + nb)) return `${na} × ${nb}`;
+    const L = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    return 'Hybrid ' + L[h % 24] + L[(h >>> 5) % 24] + L[(h >>> 10) % 24] + '-' + ((h >>> 15) % 9 + 1);
+  }
   function personName(seed, c, idx) {
     const h = hash4(seed, c, idx, 0x77), n = SYL.length;
     const first = cap1(SYL[h % n] + SYL[(h >>> 5) % n]);
@@ -132,8 +167,10 @@
       init.conn[c] = clamp01(0.1 + 0.18 * coastal[c] + 0.3 * (f(7) - 0.3));
       init.cap[c] = clamp01(0.03 + 0.3 * inst[c] + 0.2 * (f(8) - 0.3));
       for (let k = 0; k < NB; k++) {
-        const v = fbm(us, 300 + k * 5, x, y);
-        baseExp[k * C + c] = k < 2 ? clamp01(0.5 + (v - 0.5) * 2) : clamp01((v - 0.5) * 3);
+        // older knowledge has spread further by 1900
+        const v = fbm(us, 300 + k * 5, x, y), yr = REAL.axioms[k].year;
+        const bias = yr < 1700 ? 0.45 : yr < 1850 ? 0.12 : 0.05;
+        baseExp[k * C + c] = clamp01((v - 0.5) * 3 + bias);
       }
     }
     for (const c of landIdx) init.pop[c] *= 1.6e9 / popSum;   // ~1900 world population
@@ -186,10 +223,10 @@
     this.lostCap = new Float32Array(C); this.lostRes = new Float32Array(C);   // value of ideas that died here, by bottleneck
     this.exp = new Float32Array(MAXT * C); this.exp2 = new Float32Array(MAXT * C);
     this.exp.set(U.baseExp);
-    this.T = { n: 0, hash: [], a: [], b: [], v: [], d: [], depth: [], year: [], cell: [], name: [], inv: [], meta: [],
+    this.T = { n: 0, hash: [], a: [], b: [], v: [], d: [], depth: [], year: [], cell: [], name: [], inv: [], meta: [], real: [],
       children: [], adopt: new Float32Array(MAXT) };
     this.tIndex = new Map(); this.names = new Set(); this.boost = new Map();
-    for (let k = 0; k < NB; k++) this.addTech(baseHash(k), -1, -1, -1, { v: 0.08, d: 0 }, null, BASE_NAMES[k]);
+    for (let k = 0; k < NB; k++) this.addTech(REAL.axioms[k].h, -1, -1, -1, { v: 0.08, d: 0, real: REAL.axioms[k] }, null);
     this.people = []; this.pidMap = new Map(); this.firms = []; this.firmTech = new Set();
     this.ideas = new Map(); this.events = []; this.hist = [];
     this.blocked = new Set(this.iv.filter(v => v.type === 'block').map(v => v.tech));
@@ -206,12 +243,13 @@
     const T = this.T;
     if (T.n >= MAXT) { this.full = true; return -1; }
     const k = T.n++;
-    let name = forcedName || techName(h);
+    let name = forcedName || nameFor(h, a >= 0 ? T.name[a] : '', b >= 0 ? T.name[b] : '');
     if (this.names.has(name)) { let i = 2; while (this.names.has(name + ' ' + i)) i++; name = name + ' ' + i; }
     this.names.add(name);
     T.hash[k] = h; T.a[k] = a; T.b[k] = b; T.v[k] = props.v * (this.boost.get(h) || 1); T.d[k] = props.d;
     T.depth[k] = a < 0 ? 0 : Math.max(T.depth[a], T.depth[b]) + 1;
     T.year[k] = START_YEAR + this.t; T.cell[k] = c; T.name[k] = name; T.inv[k] = -1; T.meta[k] = meta; T.children[k] = [];
+    T.real[k] = props.real || null;
     if (a >= 0) { T.children[a].push(k); T.children[b].push(k); }
     this.tIndex.set(h, k);
     return k;
@@ -353,7 +391,17 @@
         for (let i = 0; i < n && m > 1; i++) {
           this.counters.attempts++;
           const pickK = u => { u *= tot; let lo = 0, hi = m - 1; while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid] < u) lo = mid + 1; else hi = mid; } return ks[lo]; };
-          const a = pickK(rnd(s, t, c, 0x20000 + i)), b = pickK(rnd(s, t, c, 0x30000 + i));
+          const a = pickK(rnd(s, t, c, 0x20000 + i));
+          let b = -1;
+          // related ideas get combined more often: sometimes reach for a known real partner of a
+          const partners = rnd(s, t, c, 0x38000 + i) < P.related ? REAL.partners.get(T.hash[a]) : null;
+          if (partners) {
+            let pt = 0; const opts = [];
+            for (const ph of partners) { const pk = this.tIndex.get(ph); if (pk !== undefined && X[pk * C + c] > 0.03) { opts.push(pk); pt += X[pk * C + c]; } }
+            let u = rnd(s, t, c, 0x39000 + i) * pt;
+            for (const pk of opts) { u -= X[pk * C + c]; if (u <= 0) { b = pk; break; } }
+          }
+          if (b < 0) b = pickK(rnd(s, t, c, 0x30000 + i));
           if (a === b) { this.counters.selfpair++; continue; }
           const h = pairHash(T.hash[a], T.hash[b]);
           if (this.tIndex.has(h)) { this.counters.rediscover++; continue; }
@@ -361,7 +409,7 @@
           const props = techProps(U.us, h, Math.max(T.depth[a], T.depth[b]) + 1);
           if (props.v === 0) { this.counters.duds++; continue; }
           let idea = this.ideas.get(h);
-          if (!idea) { idea = { h, a, b, v: props.v * (this.boost.get(h) || 1), name: techName(h), conceived: 0, failCap: 0, failRes: 0, tries: [], realised: -1 }; this.ideas.set(h, idea); }
+          if (!idea) { idea = { h, a, b, v: props.v * (this.boost.get(h) || 1), name: nameFor(h, T.name[a], T.name[b]), conceived: 0, failCap: 0, failRes: 0, tries: [], realised: -1 }; this.ideas.set(h, idea); }
           idea.conceived++;
           const capP = this.capProb(c, props.d), r1 = rnd(s, t, c, 0x40000 + i);
           const resP = this.resProb(c, props.v), r2 = rnd(s, t, c, 0x50000 + i);
@@ -495,6 +543,29 @@
     return seen.size;
   };
 
+  // How closely this history's order of real inventions follows our world's (Spearman rank correlation)
+  World.prototype.realCheck = function () {
+    const sim = [], real = [];
+    for (let k = NB; k < this.T.n; k++) if (this.T.real[k]) { sim.push(this.T.year[k]); real.push(this.T.real[k].year); }
+    let within = 0;
+    for (let i = 0; i < sim.length; i++) if (Math.abs(sim[i] - real[i]) <= 15) within++;
+    return { found: sim.length, total: REAL.inventions, rho: spearman(sim, real), within,
+      mae: sim.length ? sim.reduce((a, y, i) => a + Math.abs(y - real[i]), 0) / sim.length : NaN };
+  };
+  function spearman(x, y) {
+    const n = x.length;
+    if (n < 5) return NaN;
+    const rank = arr => {
+      const idx = arr.map((v, i) => i).sort((i, j) => arr[i] - arr[j]), r = new Array(n);
+      for (let i = 0; i < n;) { let j = i; while (j + 1 < n && arr[idx[j + 1]] === arr[idx[i]]) j++; for (let q = i; q <= j; q++) r[idx[q]] = (i + j) / 2; i = j + 1; }
+      return r;
+    };
+    const rx = rank(x), ry = rank(y), mx = (n - 1) / 2;
+    let num = 0, dx = 0, dy = 0;
+    for (let i = 0; i < n; i++) { num += (rx[i] - mx) * (ry[i] - mx); dx += (rx[i] - mx) ** 2; dy += (ry[i] - mx) ** 2; }
+    return num / Math.sqrt(dx * dy);
+  }
+
   World.prototype.zipf = function () {
     const sizes = this.firms.filter(f => f.alive).map(f => f.size).sort((a, b) => b - a).slice(0, 200);
     if (sizes.length < 20) return NaN;
@@ -551,7 +622,8 @@
     }
     const valuable = cand.length;
     cand.sort((x, y) => y.v - x.v);
-    const top = cand.slice(0, 400);
+    // the 400 most valuable, plus every real invention on the frontier
+    const top = cand.slice(0, 400).concat(cand.slice(400).filter(f => REAL.byHash.has(f.h)));
     for (const f of top) {
       // doors: valuable ideas that become possible once this one exists
       const kids = [];
@@ -578,9 +650,11 @@
       f.expected = f.potential * f.p;
       const idea = this.ideas.get(f.h);
       f.tried = idea ? idea.conceived : 0; f.failCap = idea ? idea.failCap : 0; f.failRes = idea ? idea.failRes : 0;
-      f.name = techName(f.h);
+      f.name = nameFor(f.h, T.name[f.a], T.name[f.b]); f.real = REAL.byHash.get(f.h) || null;
     }
-    return { pairs, valuable, list: top.sort((x, y) => y.potential - x.potential).slice(0, limit || 30) };
+    top.sort((x, y) => y.potential - x.potential);
+    return { pairs, valuable, list: top.slice(0, limit || 30), real: top.filter(f => f.real).slice(0, limit || 30),
+      spec: top.filter(f => !f.real).slice(0, limit || 30) };
   };
 
   // Causal potential of one idea: many futures branching from the current year, each paired with
@@ -613,7 +687,7 @@
     const techs = [];
     for (let k = NB; k < w.T.n; k++) techs.push([w.T.hash[k], w.T.year[k], w.T.name[k]]);
     return { seed: w.seed, gdp: w.series.gdp.slice(), gdpEnd: w.series.gdp[w.series.gdp.length - 1], popEnd: w.series.pop[w.series.pop.length - 1],
-      gini: w.series.gini[w.series.gini.length - 1], zipf: w.zipf(), techs, nTech: w.T.n - NB };
+      gini: w.series.gini[w.series.gini.length - 1], zipf: w.zipf(), techs, nTech: w.T.n - NB, real: w.realCheck() };
   }
   function runEnsemble(us, seeds, interventions, years, onProgress) {
     const U = makeUniverse(us), base = [], fork = [];
@@ -634,7 +708,8 @@
     add(base, 'base'); add(fork, 'fork');
     const q = (arr, p) => { const s = arr.slice().sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1) + 0.5))]; };
     const out = { n: base.length, forked: fork.length > 0, presence: Array.from(presence.values()),
-      base: { gdpMed: q(base.map(w => w.gdpEnd), 0.5), gini: q(base.map(w => w.gini), 0.5), zipf: q(base.map(w => w.zipf).filter(isFinite), 0.5), nTech: q(base.map(w => w.nTech), 0.5),
+      base: { realRho: q(base.map(w => w.real.rho).filter(isFinite), 0.5), realFound: q(base.map(w => w.real.found), 0.5), realTotal: base[0].real.total,
+        realMae: q(base.map(w => w.real.mae).filter(isFinite), 0.5), gdpMed: q(base.map(w => w.gdpEnd), 0.5), gini: q(base.map(w => w.gini), 0.5), zipf: q(base.map(w => w.zipf).filter(isFinite), 0.5), nTech: q(base.map(w => w.nTech), 0.5),
         band: base[0].gdp.map((_, t) => [q(base.map(w => w.gdp[t]), 0.1), q(base.map(w => w.gdp[t]), 0.5), q(base.map(w => w.gdp[t]), 0.9)]) } };
     if (fork.length) {
       const ratios = fork.map((w, i) => w.gdpEnd / base[i].gdpEnd);
@@ -647,7 +722,7 @@
     return out;
   }
 
-  const API = { W, H, C, MAXT, START_YEAR, YEARS, NB, TRAITS, makeUniverse, World, runEnsemble, summarise, aggregate, testIdea, regionName, ivLabel, regionCells, hash4, rnd };
+  const API = { W, H, C, MAXT, START_YEAR, YEARS, NB, REAL, TRAITS, makeUniverse, World, runEnsemble, summarise, aggregate, testIdea, regionName, ivLabel, regionCells, hash4, rnd };
   if (typeof module !== 'undefined' && module.exports) module.exports = API;
   root.Axiomatic = API;
 })(typeof self !== 'undefined' ? self : this);

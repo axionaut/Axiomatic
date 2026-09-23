@@ -7,6 +7,7 @@ See [CONCEPT.md](CONCEPT.md) for the idea in full.
 ## What the v0 prototype does
 
 - **564 statistical cells** stand in for billions of people. Each cell holds trait distributions: education, skill, creativity, risk appetite, capital access and connectivity.
+- **Real technologies:** the world starts in 1900 with 46 real technologies. 92 real later inventions (radio through large language models) each sit at a fixed point of the idea landscape: the combination of their two key ingredients, for example Transistor = Quantum mechanics + Vacuum tube. Importance comes from Wikipedia coverage via Wikidata (CC0). Every other combination is marked **speculative**. A real-history check compares the simulated order of inventions with our world's.
 - **Ideas are combinations** of existing technologies. Only the adjacent possible is evaluated. Most combinations are worthless or already exist; a few are valuable, following a heavy-tailed distribution.
 - **Materialisation:** when an idea succeeds or a firm is founded, the originating person is sampled from the cell, conditioned on having done it. Everyone else is never computed individually.
 - **Causal trace:** every technology, person and firm opens into an expandable ancestry tree. Each link is tagged **RECORDED** (computed when it happened) or **RECONSTRUCTED** (sampled afterwards to stay consistent with the record).
@@ -33,4 +34,5 @@ Then open http://localhost:8000. Opening `index.html` directly from disk also wo
 | `engine.js` | Deterministic simulation: universe, world, materialisation, biography, ensembles. No DOM; also runs in Node. |
 | `app.js` | UI: map, transport, inspector, causal tree, counterfactuals, charts. |
 | `worker.js` | Runs ensembles off the main thread. |
+| `data/techgraph.js` | Generated real technology graph. Rebuild with `node tools/build-techgraph.js` after editing `tools/techs.src.js`. |
 | `index.html`, `styles.css`, `favicon.svg` | Page, styling and icon. |
